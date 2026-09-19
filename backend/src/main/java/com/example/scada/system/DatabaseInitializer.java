@@ -179,15 +179,16 @@ public class DatabaseInitializer implements ApplicationRunner {
     private void seedScadaCatalog() {
         seedAreas();
         seedDevices();
+        cleanupLegacyDemoPoints();
         seedPoints();
     }
 
     private void seedAreas() {
         List<AreaSeed> areas = List.of(
-                new AreaSeed("供水一区", "AREA-WATER-01", "市政供水与二次加压站点"),
-                new AreaSeed("能源中心", "AREA-ENERGY", "换热、能耗与循环系统"),
-                new AreaSeed("动力车间", "AREA-POWER", "空压、配电与动力设备"),
-                new AreaSeed("环保站", "AREA-ENV", "污水与环保治理站点")
+                new AreaSeed("进水闸门区", "AREA-WATER-01", "进水闸门与液位监测区域"),
+                new AreaSeed("泵房一区", "AREA-ENERGY", "加压泵与出口仪表区域"),
+                new AreaSeed("仪表间", "AREA-POWER", "独立仪表与网关设备"),
+                new AreaSeed("配电室", "AREA-ENV", "配电、变频与控制设备")
         );
         for (AreaSeed area : areas) {
             jdbcTemplate.update("""
@@ -200,10 +201,10 @@ public class DatabaseInitializer implements ApplicationRunner {
 
     private void seedDevices() {
         List<DeviceSeed> devices = List.of(
-                new DeviceSeed(areaId("AREA-WATER-01"), "一号加压泵站", "DEV-PUMP-001", "泵站", "运行", "MODBUS_TCP", "127.0.0.1", 1502, "供水一区主加压泵站"),
-                new DeviceSeed(areaId("AREA-ENERGY"), "二号换热机组", "DEV-HEAT-002", "换热机组", "待机", "MODBUS_TCP", "127.0.0.1", 1503, "能源中心二号换热单元"),
-                new DeviceSeed(areaId("AREA-POWER"), "空压站 A 线", "DEV-AIR-A", "空压机", "运行", "MQTT", "127.0.0.1", 1883, "动力车间空压 A 线"),
-                new DeviceSeed(areaId("AREA-ENV"), "污水提升井", "DEV-WASTE-LIFT", "提升井", "告警", "MODBUS_TCP", "127.0.0.1", 1504, "环保站污水提升与液位监测")
+                new DeviceSeed(areaId("AREA-WATER-01"), "1#进水闸门", "DEV-PUMP-001", "闸门", "运行", "MODBUS_TCP", "127.0.0.1", 1502, "独立闸门执行设备，挂载开度与到位反馈点位"),
+                new DeviceSeed(areaId("AREA-WATER-01"), "2#进水闸门", "DEV-HEAT-002", "闸门", "待机", "MODBUS_TCP", "127.0.0.1", 1503, "独立闸门执行设备，挂载开关到位与故障点位"),
+                new DeviceSeed(areaId("AREA-ENERGY"), "1#加压泵", "DEV-AIR-A", "水泵", "运行", "MQTT", "127.0.0.1", 1883, "独立泵设备，挂载频率、电流和运行状态点位"),
+                new DeviceSeed(areaId("AREA-POWER"), "出口压力变送器", "DEV-WASTE-LIFT", "仪表", "告警", "MODBUS_TCP", "127.0.0.1", 1504, "独立压力仪表，挂载压力值和报警状态点位")
         );
         for (DeviceSeed device : devices) {
             jdbcTemplate.update("""
@@ -217,25 +218,36 @@ public class DatabaseInitializer implements ApplicationRunner {
 
     private void seedPoints() {
         seedDevicePoints("DEV-PUMP-001", List.of(
-                new PointSeed("出口压力", "OUT_PRESSURE", "DECIMAL", "MPa", "40001", "R", 1.0, 10),
-                new PointSeed("泵组频率", "PUMP_FREQ", "DECIMAL", "Hz", "40002", "R", 1.0, 20),
-                new PointSeed("运行状态", "RUN_STATE", "BOOLEAN", "", "00001", "R", 1.0, 30)
+                new PointSeed("开度反馈", "OPENING_FEEDBACK", "DECIMAL", "%", "40001", "R", 1.0, 10),
+                new PointSeed("开到位", "OPEN_LIMIT", "BOOLEAN", "", "00001", "R", 1.0, 20),
+                new PointSeed("关到位", "CLOSE_LIMIT", "BOOLEAN", "", "00002", "R", 1.0, 30)
         ));
         seedDevicePoints("DEV-HEAT-002", List.of(
-                new PointSeed("供水温度", "SUPPLY_TEMP", "DECIMAL", "C", "40011", "R", 1.0, 10),
-                new PointSeed("回水温度", "RETURN_TEMP", "DECIMAL", "C", "40012", "R", 1.0, 20),
-                new PointSeed("循环泵状态", "PUMP_STATE", "BOOLEAN", "", "00011", "R", 1.0, 30)
+                new PointSeed("开度反馈", "OPENING_FEEDBACK", "DECIMAL", "%", "40011", "R", 1.0, 10),
+                new PointSeed("远程允许", "REMOTE_ENABLE", "BOOLEAN", "", "00011", "R", 1.0, 20),
+                new PointSeed("故障状态", "FAULT_STATE", "BOOLEAN", "", "00012", "R", 1.0, 30)
         ));
         seedDevicePoints("DEV-AIR-A", List.of(
-                new PointSeed("出口压力", "AIR_PRESSURE", "DECIMAL", "MPa", "air/a/pressure", "R", 1.0, 10),
-                new PointSeed("电机电流", "MOTOR_CURRENT", "DECIMAL", "A", "air/a/current", "R", 1.0, 20),
-                new PointSeed("加载状态", "LOAD_STATE", "BOOLEAN", "", "air/a/load", "R", 1.0, 30)
+                new PointSeed("频率反馈", "FREQ_FEEDBACK", "DECIMAL", "Hz", "pump/1/frequency", "R", 1.0, 10),
+                new PointSeed("电机电流", "MOTOR_CURRENT", "DECIMAL", "A", "pump/1/current", "R", 1.0, 20),
+                new PointSeed("运行状态", "RUN_STATE", "BOOLEAN", "", "pump/1/run", "R", 1.0, 30)
         ));
         seedDevicePoints("DEV-WASTE-LIFT", List.of(
-                new PointSeed("井内液位", "WELL_LEVEL", "DECIMAL", "m", "40021", "R", 1.0, 10),
-                new PointSeed("高高液位报警", "HH_LEVEL_ALARM", "BOOLEAN", "", "00021", "R", 1.0, 20),
-                new PointSeed("提升泵状态", "LIFT_PUMP_STATE", "BOOLEAN", "", "00022", "R", 1.0, 30)
+                new PointSeed("压力值", "PRESSURE_VALUE", "DECIMAL", "MPa", "40021", "R", 1.0, 10),
+                new PointSeed("高压报警", "HIGH_PRESSURE_ALARM", "BOOLEAN", "", "00021", "R", 1.0, 20),
+                new PointSeed("通讯状态", "COMM_STATE", "BOOLEAN", "", "00022", "R", 1.0, 30)
         ));
+    }
+
+    private void cleanupLegacyDemoPoints() {
+        List<String> oldCodes = List.of(
+                "OUT_PRESSURE", "PUMP_FREQ", "SUPPLY_TEMP", "RETURN_TEMP", "PUMP_STATE",
+                "AIR_PRESSURE", "MOTOR_CURRENT", "LOAD_STATE", "RUN_STATE",
+                "WELL_LEVEL", "HH_LEVEL_ALARM", "LIFT_PUMP_STATE"
+        );
+        for (String code : oldCodes) {
+            jdbcTemplate.update("delete from scada_point where code = ?", code);
+        }
     }
 
     private void seedDevicePoints(String deviceCode, List<PointSeed> points) {

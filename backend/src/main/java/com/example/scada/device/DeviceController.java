@@ -61,4 +61,24 @@ public class DeviceController {
     public List<PointResponse> listPoints(@RequestParam Long deviceId) {
         return deviceService.listPoints(deviceId);
     }
+
+    @PostMapping("/devices/{deviceId}/points")
+    @ResponseStatus(HttpStatus.CREATED)
+    public PointResponse createPoint(@PathVariable Long deviceId, @RequestBody PointRequest request) {
+        return deviceService.createPoint(deviceId, request);
+    }
+
+    @PutMapping("/devices/{deviceId}/points/{pointId}")
+    public PointResponse updatePoint(
+            @PathVariable Long deviceId,
+            @PathVariable Long pointId,
+            @RequestBody PointRequest request) {
+        return deviceService.updatePoint(deviceId, pointId, request);
+    }
+
+    @DeleteMapping("/devices/{deviceId}/points/{pointId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deletePoint(@PathVariable Long deviceId, @PathVariable Long pointId) {
+        deviceService.deletePoint(deviceId, pointId);
+    }
 }

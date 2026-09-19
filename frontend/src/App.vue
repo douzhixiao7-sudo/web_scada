@@ -46,6 +46,16 @@ type DeviceForm = {
   port: number | null
   description: string
 }
+type PointForm = {
+  name: string
+  code: string
+  dataType: string
+  unit: string
+  address: string
+  accessMode: string
+  scaleValue: number
+  sortOrder: number
+}
 
 const fallbackMenus: MenuItem[] = [
   { key: 'overview', label: '首页总览', helper: '运行态势', icon: '⌁' },
@@ -77,10 +87,13 @@ const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
 const savingDevice = ref(false)
+const savingPoint = ref(false)
 const editingDeviceId = ref<number | null>(null)
+const editingPointId = ref<number | null>(null)
 const areaFilter = ref('')
 const statusFilter = ref('')
 const deviceForm = ref<DeviceForm>(emptyDeviceForm())
+const pointForm = ref<PointForm>(emptyPointForm())
 
 const activeItem = computed(() => menuItems.value.find((item) => item.key === activeMenu.value) ?? menuItems.value[0] ?? fallbackMenus[0])
 const dbStatus = computed(() => health.value?.components?.db?.status ?? 'UNKNOWN')
@@ -91,14 +104,18 @@ const onlineDeviceCount = computed(() => devices.value.filter((device) => device
 const alarmDeviceCount = computed(() => devices.value.filter((device) => device.status === '告警').length)
 
 const alarmRows = [
-  { level: '高', source: '污水提升井', message: '液位超过高高限', time: '19:08:12' },
-  { level: '中', source: '空压站 A 线', message: '出口压力波动', time: '19:02:44' },
-  { level: '低', source: '二号换热机组', message: '巡检计划待确认', time: '18:55:21' },
+  { level: '高', source: '出口压力变送器', message: '压力超过高限', time: '19:08:12' },
+  { level: '中', source: '1#加压泵', message: '电机电流波动', time: '19:02:44' },
+  { level: '低', source: '2#进水闸门', message: '远程允许待确认', time: '18:55:21' },
 ]
 const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
 
 function emptyDeviceForm(): DeviceForm {
-  return { areaId: null, name: '', code: '', type: '泵站', status: '运行', protocol: 'MODBUS_TCP', ipAddress: '127.0.0.1', port: 1502, description: '' }
+  return { areaId: null, name: '', code: '', type: '闸门', status: '运行', protocol: 'MODBUS_TCP', ipAddress: '127.0.0.1', port: 1502, description: '' }
+}
+
+function emptyPointForm(): PointForm {
+  return { name: '', code: '', dataType: 'DECIMAL', unit: '', address: '', accessMode: 'R', scaleValue: 1, sortOrder: 10 }
 }
 
 function authHeaders(): Record<string, string> {
@@ -223,6 +240,8 @@ async function loadDeviceData() {
 async function selectDevice(device: Device) {
   selectedDevice.value = device
   points.value = await apiFetch<Point[]>(`/api/points?deviceId=${device.id}`)
+  editingPointId.value = null
+  pointForm.value = emptyPointForm()
 }
 
 function startCreateDevice() {
@@ -267,6 +286,62 @@ async function deleteDevice(device: Device) {
     await loadDeviceData()
   } catch (error) {
     deviceError.value = error instanceof Error ? error.message : '设备删除失败'
+  }
+}
+
+function startCreatePoint() {
+  editingPointId.value = null
+  pointForm.value = emptyPointForm()
+}
+
+function startEditPoint(point: Point) {
+  editingPointId.value = point.id
+  pointForm.value = {
+    name: point.name,
+    code: point.code,
+    dataType: point.dataType,
+    unit: point.unit,
+    address: point.address,
+    accessMode: point.accessMode,
+    scaleValue: point.scaleValue,
+    sortOrder: point.sortOrder,
+  }
+}
+
+async function savePoint() {
+  if (!selectedDevice.value) {
+    deviceError.value = '请先选择设备'
+    return
+  }
+  savingPoint.value = true
+  deviceError.value = ''
+  try {
+    const payload = JSON.stringify(pointForm.value)
+    if (editingPointId.value) {
+      await apiFetch<Point>(`/api/devices/${selectedDevice.value.id}/points/${editingPointId.value}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload })
+    } else {
+      await apiFetch<Point>(`/api/devices/${selectedDevice.value.id}/points`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
+    }
+    editingPointId.value = null
+    pointForm.value = emptyPointForm()
+    points.value = await apiFetch<Point[]>(`/api/points?deviceId=${selectedDevice.value.id}`)
+    await loadDeviceData()
+  } catch (error) {
+    deviceError.value = error instanceof Error ? error.message : '点位保存失败'
+  } finally {
+    savingPoint.value = false
+  }
+}
+
+async function deletePoint(point: Point) {
+  if (!selectedDevice.value) return
+  deviceError.value = ''
+  try {
+    await apiFetch<void>(`/api/devices/${selectedDevice.value.id}/points/${point.id}`, { method: 'DELETE' })
+    points.value = await apiFetch<Point[]>(`/api/points?deviceId=${selectedDevice.value.id}`)
+    await loadDeviceData()
+  } catch (error) {
+    deviceError.value = error instanceof Error ? error.message : '点位删除失败'
   }
 }
 
@@ -373,8 +448,25 @@ onMounted(async () => {
           </form>
 
           <div class="point-list">
-            <div class="panel-head"><h3>设备点位</h3><span>{{ points.length }} 个</span></div>
-            <article v-for="point in points" :key="point.id"><strong>{{ point.name }}</strong><small>{{ point.code }} · {{ point.dataType }} · {{ point.address }} {{ point.unit }}</small></article>
+            <div class="panel-head">
+              <h3>设备点位</h3>
+              <button class="ghost compact" type="button" :disabled="!selectedDevice" @click="startCreatePoint">新增点位</button>
+            </div>
+            <form class="point-form" @submit.prevent="savePoint">
+              <label><span>名称</span><input v-model="pointForm.name" :disabled="!selectedDevice" /></label>
+              <label><span>编码</span><input v-model="pointForm.code" :disabled="!selectedDevice" /></label>
+              <label><span>数据类型</span><select v-model="pointForm.dataType" :disabled="!selectedDevice"><option>DECIMAL</option><option>INTEGER</option><option>BOOLEAN</option><option>STRING</option></select></label>
+              <label><span>读写</span><select v-model="pointForm.accessMode" :disabled="!selectedDevice"><option>R</option><option>W</option><option>RW</option></select></label>
+              <label><span>单位</span><input v-model="pointForm.unit" :disabled="!selectedDevice" /></label>
+              <label><span>地址</span><input v-model="pointForm.address" :disabled="!selectedDevice" /></label>
+              <label><span>缩放</span><input v-model.number="pointForm.scaleValue" type="number" step="0.0001" :disabled="!selectedDevice" /></label>
+              <label><span>排序</span><input v-model.number="pointForm.sortOrder" type="number" :disabled="!selectedDevice" /></label>
+              <button class="primary" type="submit" :disabled="!selectedDevice || savingPoint">{{ savingPoint ? '保存中' : editingPointId ? '保存点位' : '创建点位' }}</button>
+            </form>
+            <article v-for="point in points" :key="point.id" :class="{ selected: editingPointId === point.id }">
+              <div><strong>{{ point.name }}</strong><small>{{ point.code }} · {{ point.dataType }} · {{ point.address }} {{ point.unit }}</small></div>
+              <div class="row-actions"><button class="ghost compact" type="button" @click="startEditPoint(point)">编辑</button><button class="ghost compact" type="button" @click="deletePoint(point)">删除</button></div>
+            </article>
             <p v-if="!points.length" class="muted">选择设备后查看点位。</p>
           </div>
         </aside>

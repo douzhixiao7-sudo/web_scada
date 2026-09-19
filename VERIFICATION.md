@@ -19,6 +19,7 @@
 - 设备管理接口：`/api/areas` 返回 4 个区域，`/api/devices` 返回 4 台演示设备。
 - 点位接口：`/api/points?deviceId=...` 返回首台设备 3 个点位。
 - 设备 CRUD：通过 `/api/devices` 新增测试设备、编辑状态和端口、再删除，流程通过。
+- 点位 CRUD：通过 `/api/devices/{deviceId}/points` 新增测试点位、编辑数据类型和地址、再删除，流程通过。
 
 ## 当前范围
 

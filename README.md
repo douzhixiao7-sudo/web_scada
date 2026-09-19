@@ -56,7 +56,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 后端已提供设备管理基础接口：`/api/areas`、`/api/devices`、`/api/devices/{id}`、`/api/points?deviceId=...`。登录后可进行设备列表查询、区域/状态筛选、新建设备、编辑设备、删除设备，并查看设备点位。
 
-首次启动会自动创建 `scada_area`、`scada_device`、`scada_point`，并写入 4 个演示区域、4 台演示设备和基础点位。当前仍是设备台账 MVP，不连接真实 PLC，也不进行实时采集。
+首次启动会自动创建 `scada_area`、`scada_device`、`scada_point`，并写入 4 个演示区域、4 台独立设备和基础点位。区域只表示设备归属位置；`1#进水闸门`、`2#进水闸门`、`1#加压泵`、`出口压力变送器` 这类可通信、可采集或可控制对象才是设备。当前仍是设备与点位台账 MVP，不连接真实 PLC，也不进行实时采集。
+
+点位已支持按设备维护：查看、新增、编辑、删除、配置点位编码、采集地址、数据类型、单位、读写属性、缩放系数和排序。
 ## 工程结构
 
 ```text

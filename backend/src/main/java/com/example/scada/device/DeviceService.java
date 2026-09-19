@@ -69,6 +69,7 @@ public class DeviceService {
     }
 
     public List<PointResponse> listPoints(Long deviceId) {
+        ensureDeviceExists(deviceId);
         return jdbcTemplate.query("""
                 select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order
                 from scada_point
@@ -86,6 +87,44 @@ public class DeviceService {
                 rs.getDouble("scale_value"),
                 rs.getInt("sort_order")
         ), deviceId);
+    }
+
+    @Transactional
+    public PointResponse createPoint(Long deviceId, PointRequest request) {
+        ensureDeviceExists(deviceId);
+        validatePoint(request);
+        jdbcTemplate.update("""
+                insert into scada_point(device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, deviceId, clean(request.name()), clean(request.code()), clean(request.dataType()), clean(request.unit()),
+                clean(request.address()), clean(request.accessMode()), scaleValue(request), sortOrder(request));
+        Long id = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
+        return getPoint(deviceId, id);
+    }
+
+    @Transactional
+    public PointResponse updatePoint(Long deviceId, Long pointId, PointRequest request) {
+        ensureDeviceExists(deviceId);
+        validatePoint(request);
+        int updated = jdbcTemplate.update("""
+                update scada_point
+                set name = ?, code = ?, data_type = ?, unit = ?, address = ?, access_mode = ?, scale_value = ?, sort_order = ?
+                where id = ? and device_id = ?
+                """, clean(request.name()), clean(request.code()), clean(request.dataType()), clean(request.unit()),
+                clean(request.address()), clean(request.accessMode()), scaleValue(request), sortOrder(request), pointId, deviceId);
+        if (updated == 0) {
+            throw new IllegalArgumentException("点位不存在");
+        }
+        return getPoint(deviceId, pointId);
+    }
+
+    @Transactional
+    public void deletePoint(Long deviceId, Long pointId) {
+        ensureDeviceExists(deviceId);
+        int deleted = jdbcTemplate.update("delete from scada_point where id = ? and device_id = ?", pointId, deviceId);
+        if (deleted == 0) {
+            throw new IllegalArgumentException("点位不存在");
+        }
     }
 
     @Transactional
@@ -141,6 +180,29 @@ public class DeviceService {
         );
     }
 
+    private PointResponse getPoint(Long deviceId, Long pointId) {
+        List<PointResponse> points = jdbcTemplate.query("""
+                select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order
+                from scada_point
+                where id = ? and device_id = ?
+                """, (rs, rowNum) -> new PointResponse(
+                rs.getLong("id"),
+                rs.getLong("device_id"),
+                rs.getString("name"),
+                rs.getString("code"),
+                rs.getString("data_type"),
+                rs.getString("unit"),
+                rs.getString("address"),
+                rs.getString("access_mode"),
+                rs.getDouble("scale_value"),
+                rs.getInt("sort_order")
+        ), pointId, deviceId);
+        if (points.isEmpty()) {
+            throw new IllegalArgumentException("点位不存在");
+        }
+        return points.getFirst();
+    }
+
     private void validate(DeviceRequest request) {
         if (request.areaId() == null) {
             throw new IllegalArgumentException("请选择区域");
@@ -152,6 +214,31 @@ public class DeviceService {
         if (areaCount == null || areaCount == 0) {
             throw new IllegalArgumentException("区域不存在");
         }
+    }
+
+    private void validatePoint(PointRequest request) {
+        if (request == null || isBlank(request.name()) || isBlank(request.code()) || isBlank(request.dataType())
+                || isBlank(request.address()) || isBlank(request.accessMode())) {
+            throw new IllegalArgumentException("点位名称、编码、数据类型、采集地址和读写属性不能为空");
+        }
+    }
+
+    private void ensureDeviceExists(Long deviceId) {
+        if (deviceId == null) {
+            throw new IllegalArgumentException("请选择设备");
+        }
+        Integer count = jdbcTemplate.queryForObject("select count(*) from scada_device where id = ?", Integer.class, deviceId);
+        if (count == null || count == 0) {
+            throw new IllegalArgumentException("设备不存在");
+        }
+    }
+
+    private double scaleValue(PointRequest request) {
+        return request.scaleValue() == null ? 1.0 : request.scaleValue();
+    }
+
+    private int sortOrder(PointRequest request) {
+        return request.sortOrder() == null ? 0 : request.sortOrder();
     }
 
     private boolean isBlank(String value) {
