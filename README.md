@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 启动框架，以及本机 MySQL / Redis 基础连接。没有设备管理、PLC 采集、控制、报警、历史或组态业务，也没有业务表。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、设备与点位台账、系统字典，以及实时监控静态页面框架。当前没有 PLC 仿真、真实采集、控制下发、报警闭环、历史数据或组态业务。
 
 ## 本机位置
 
@@ -45,7 +45,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 服务绑定本机回环地址：前端 `http://127.0.0.1:5173`，后端 `http://127.0.0.1:8080/actuator/health`，前端代理 `/api/actuator/health`。健康检查包含 `db` 和 `redis`；失败时不会伪造成功。
 
-
 ## 认证与菜单
 
 后端已提供最小认证闭环：`/api/auth/login`、`/api/auth/me`、`/api/auth/logout` 和 `/api/menus`。登录成功后，后端会把 session token 写入 Redis，前端使用 `Authorization: Bearer <token>` 调用受保护接口。
@@ -63,6 +62,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 ## 系统字典
 
 后端已提供基础字典表 `sys_dict_type`、`sys_dict_item`，接口为 `/api/dictionaries`、`/api/dictionaries/{typeCode}/items`、`/api/dictionaries/items?typeCodes=...`。当前已维护：设备状态、通讯协议、设备类型、点位数据类型、点位读写属性、点位单位。设备与点位表单下拉项来自字典接口，不再写死在页面里。
+
+## 实时监控静态框架
+
+前端已提供“实时监控”页面的 MVP 静态框架。页面基于现有设备与点位台账展示设备状态、协议、点位清单和实时数据接入契约，占位字段包括 `pointId`、`value`、`quality`、`collectedAt`。当前页面只读取 `/api/devices` 与 `/api/points?deviceId=...`，实时值显示为“待接入 / 未采集 / 等待实时接口”。
+
+本阶段没有新增 PLC 仿真、采集调度、实时数据表或 WebSocket 推送；这些会在后续实时数据阶段单独设计和实现。
+
 ## 工程结构
 
 ```text
@@ -73,10 +79,9 @@ scripts/              工具安装、构建、启动、停止脚本
 .run/                 日志与进程记录（不提交）
 ```
 
-当前是本机开发框架，不是生产部署。暂未加入业务身份权限，因此不要对外开放服务。前端状态页不代表已连接 PLC。
+当前是本机开发框架，不是生产部署。已具备开发期认证菜单，但还不是完整生产权限体系，因此不要对外开放服务。前端监控页不代表已连接 PLC。
 
 ## 后续边界
 
-TDengine、MQTT、Modbus、WebSocket 业务订阅、认证授权与 HMI 均未开发。本次只验证服务能启动、数据库能连接以及源码可推送。
-
+TDengine、MQTT、Modbus、WebSocket 业务订阅、细粒度权限、报警、历史数据与 HMI 均未开发。下一阶段可进入实时数据模型与采集通道设计。
 

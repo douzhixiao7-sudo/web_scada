@@ -94,6 +94,8 @@ const editingDeviceId = ref<number | null>(null)
 const editingPointId = ref<number | null>(null)
 const areaFilter = ref('')
 const statusFilter = ref('')
+const monitorAreaFilter = ref('')
+const monitorDeviceId = ref<number | null>(null)
 const deviceForm = ref<DeviceForm>(emptyDeviceForm())
 const pointForm = ref<PointForm>(emptyPointForm())
 
@@ -110,6 +112,10 @@ const deviceTypeOptions = computed(() => dictItems('device_type'))
 const pointDataTypeOptions = computed(() => dictItems('point_data_type'))
 const pointAccessModeOptions = computed(() => dictItems('point_access_mode'))
 const pointUnitOptions = computed(() => dictItems('point_unit'))
+const monitorDevices = computed(() => devices.value.filter((device) => !monitorAreaFilter.value || String(device.areaId) === monitorAreaFilter.value))
+const monitorSelectedDevice = computed(() => devices.value.find((device) => device.id === monitorDeviceId.value) ?? monitorDevices.value[0] ?? null)
+const monitorPointCount = computed(() => points.value.length)
+const writablePointCount = computed(() => points.value.filter((point) => point.accessMode !== 'R').length)
 
 const alarmRows = [
   { level: '高', source: '出口压力变送器', message: '压力超过高限', time: '19:08:12' },
@@ -241,6 +247,15 @@ async function logout() {
   }
 }
 
+async function refreshMonitorPoints() {
+  if (monitorSelectedDevice.value) await selectDevice(monitorSelectedDevice.value)
+}
+
+async function changeMonitorArea() {
+  monitorDeviceId.value = monitorDevices.value[0]?.id ?? null
+  await refreshMonitorPoints()
+}
+
 async function loadDeviceData() {
   deviceLoading.value = true
   deviceError.value = ''
@@ -252,6 +267,7 @@ async function loadDeviceData() {
     if (statusFilter.value) params.set('status', statusFilter.value)
     devices.value = await apiFetch<Device[]>(`/api/devices${params.toString() ? `?${params}` : ''}`)
     if (!selectedDevice.value && devices.value.length) await selectDevice(devices.value[0])
+    if (!monitorDeviceId.value && devices.value.length) monitorDeviceId.value = devices.value[0].id
     if (selectedDevice.value && !devices.value.some((device) => device.id === selectedDevice.value?.id)) {
       selectedDevice.value = null
       points.value = []
@@ -498,7 +514,43 @@ onMounted(async () => {
         </aside>
       </section>
 
-      <section v-else-if="activeMenu === 'monitor'" class="panel page-panel"><div class="panel-head"><h3>实时采集点位</h3><span>来自设备台账</span></div><div class="table-wrap"><table><thead><tr><th>设备</th><th>区域</th><th>状态</th><th>点位数</th><th>协议</th></tr></thead><tbody><tr v-for="device in devices" :key="device.id"><td>{{ device.name }}</td><td>{{ device.areaName }}</td><td>{{ device.status }}</td><td>{{ device.pointCount }}</td><td>{{ device.protocol }}</td></tr></tbody></table></div></section>
+      <section v-else-if="activeMenu === 'monitor'" class="monitor-layout">
+        <section class="panel page-panel">
+          <div class="panel-head"><h3>实时监控框架</h3><span>基于设备/点位台账 · 暂未接入实时值</span></div>
+          <div class="toolbar monitor-toolbar">
+            <label><span>区域</span><select v-model="monitorAreaFilter" @change="changeMonitorArea"><option value="">全部区域</option><option v-for="area in areas" :key="area.id" :value="String(area.id)">{{ area.name }}</option></select></label>
+            <label><span>设备</span><select v-model.number="monitorDeviceId" @change="refreshMonitorPoints"><option v-for="device in monitorDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
+            <button class="ghost compact" type="button" @click="refreshMonitorPoints">刷新点位</button>
+          </div>
+          <div class="monitor-summary">
+            <article><span>当前设备</span><strong>{{ monitorSelectedDevice?.name ?? '未选择' }}</strong><small>{{ monitorSelectedDevice?.code ?? '无设备' }}</small></article>
+            <article><span>通讯协议</span><strong>{{ monitorSelectedDevice?.protocol ?? '-' }}</strong><small>{{ monitorSelectedDevice?.ipAddress }}{{ monitorSelectedDevice?.port ? `:${monitorSelectedDevice.port}` : '' }}</small></article>
+            <article><span>点位总数</span><strong>{{ monitorPointCount }}</strong><small>来自点位台账</small></article>
+            <article><span>可写点位</span><strong>{{ writablePointCount }}</strong><small>accessMode 非只读</small></article>
+          </div>
+          <div class="table-wrap">
+            <table class="monitor-table">
+              <thead><tr><th>点位</th><th>数据类型</th><th>地址</th><th>读写</th><th>当前值</th><th>质量</th><th>采集时间</th></tr></thead>
+              <tbody>
+                <tr v-for="point in points" :key="point.id">
+                  <td><strong>{{ point.name }}</strong><small>{{ point.code }}</small></td>
+                  <td>{{ point.dataType }}<small>{{ point.unit || '无单位' }}</small></td>
+                  <td>{{ point.address }}</td>
+                  <td>{{ point.accessMode }}</td>
+                  <td><span class="placeholder-value">待接入</span></td>
+                  <td><span class="tag idle">未采集</span></td>
+                  <td>等待实时接口</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <aside class="panel monitor-side">
+          <div class="panel-head"><h3>实时值接口契约</h3><span>MVP 预留</span></div>
+          <dl class="status-list contract-list"><dt>pointId</dt><dd>点位 ID</dd><dt>value</dt><dd>当前值</dd><dt>quality</dt><dd>GOOD / BAD / STALE</dd><dt>collectedAt</dt><dd>采集时间</dd></dl>
+          <p class="muted">当前阶段只展示监控结构和点位清单，不做仿真 PLC，不写实时值表。</p>
+        </aside>
+      </section>
 
       <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>待确认 3 条</span></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.time"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }}</strong><small>{{ alarm.source }} · {{ alarm.time }}</small></div><button class="ghost compact" type="button">确认</button></article></div></section>
 
@@ -506,3 +558,4 @@ onMounted(async () => {
     </section>
   </main>
 </template>
+

@@ -250,3 +250,44 @@ tr.selected { background: rgba(65,199,185,.07); }
   .point-form button { grid-column: span 1; }
   .row-actions { flex-direction: column; }
 }
+.monitor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  align-items: start;
+}
+.monitor-toolbar { grid-template-columns: 180px 220px auto; }
+.monitor-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.monitor-summary article {
+  display: grid;
+  gap: 8px;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.025);
+}
+.monitor-summary span, .monitor-summary small, .monitor-table small { color: var(--muted); }
+.monitor-summary strong { font-size: 18px; }
+.monitor-table td strong { display: block; }
+.placeholder-value {
+  color: var(--warning);
+  font-weight: 700;
+}
+.monitor-side { position: sticky; top: 24px; }
+.contract-list { grid-template-columns: 100px 1fr; }
+@media (max-width: 1160px) {
+  .monitor-layout { grid-template-columns: 1fr; }
+  .monitor-side { position: static; }
+}
+@media (max-width: 860px) {
+  .monitor-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitor-toolbar { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .monitor-summary { grid-template-columns: 1fr; }
+}
