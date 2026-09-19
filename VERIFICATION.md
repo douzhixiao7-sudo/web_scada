@@ -16,6 +16,10 @@
 - 菜单接口：`/api/menus` 使用 Bearer token 返回 8 个数据库菜单。
 - 退出接口：`/api/auth/logout` 可清理 Redis session。
 
+- 设备管理接口：`/api/areas` 返回 4 个区域，`/api/devices` 返回 4 台演示设备。
+- 点位接口：`/api/points?deviceId=...` 返回首台设备 3 个点位。
+- 设备 CRUD：通过 `/api/devices` 新增测试设备、编辑状态和端口、再删除，流程通过。
+
 ## 当前范围
 
 项目只包含可运行框架和基础连接验证，没有 SCADA 业务功能、业务表、PLC 接入、报警、历史数据、权限或组态功能。
@@ -23,4 +27,5 @@
 ## 本地文件
 
 `.local/` 和 `.run/` 包含本机配置、密码、缓存、日志或进程记录，已被 Git 忽略，不提交到 GitHub。
+
 

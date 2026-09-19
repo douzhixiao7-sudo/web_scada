@@ -51,6 +51,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 后端已提供最小认证闭环：`/api/auth/login`、`/api/auth/me`、`/api/auth/logout` 和 `/api/menus`。登录成功后，后端会把 session token 写入 Redis，前端使用 `Authorization: Bearer <token>` 调用受保护接口。
 
 首次启动会自动创建基础后台表：`sys_user`、`sys_role`、`sys_menu`、`sys_user_role`、`sys_role_menu`、`sys_audit_log`。默认开发账号为 `admin` / `admin`，仅用于本机开发骨架，后续进入真实权限阶段时需要改成初始化密码或用户管理流程。
+
+## 设备管理 MVP
+
+后端已提供设备管理基础接口：`/api/areas`、`/api/devices`、`/api/devices/{id}`、`/api/points?deviceId=...`。登录后可进行设备列表查询、区域/状态筛选、新建设备、编辑设备、删除设备，并查看设备点位。
+
+首次启动会自动创建 `scada_area`、`scada_device`、`scada_point`，并写入 4 个演示区域、4 台演示设备和基础点位。当前仍是设备台账 MVP，不连接真实 PLC，也不进行实时采集。
 ## 工程结构
 
 ```text
@@ -66,4 +72,5 @@ scripts/              工具安装、构建、启动、停止脚本
 ## 后续边界
 
 TDengine、MQTT、Modbus、WebSocket 业务订阅、认证授权与 HMI 均未开发。本次只验证服务能启动、数据库能连接以及源码可推送。
+
 

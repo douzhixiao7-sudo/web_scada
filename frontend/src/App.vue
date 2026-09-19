@@ -2,28 +2,50 @@
 import { computed, onMounted, ref } from 'vue'
 
 type HealthComponent = { status?: string }
-type HealthPayload = {
-  status?: string
-  components?: Record<string, HealthComponent>
-}
-type MenuItem = {
-  key: string
-  label: string
-  helper: string
-  icon: string
-  sortOrder?: number
-}
-type AuthUser = {
-  id: number
-  username: string
-  displayName: string
-}
-type AuthPayload = {
-  token?: string
-  user: AuthUser
-  menus: MenuItem[]
-}
+type HealthPayload = { status?: string; components?: Record<string, HealthComponent> }
+type MenuItem = { key: string; label: string; helper: string; icon: string; sortOrder?: number }
+type AuthUser = { id: number; username: string; displayName: string }
+type AuthPayload = { token?: string; user: AuthUser; menus: MenuItem[] }
 type ApiError = { message?: string }
+type Area = { id: number; name: string; code: string; description: string }
+type Device = {
+  id: number
+  areaId: number
+  areaName: string
+  name: string
+  code: string
+  type: string
+  status: string
+  protocol: string
+  ipAddress: string
+  port: number | null
+  description: string
+  pointCount: number
+}
+type Point = {
+  id: number
+  deviceId: number
+  name: string
+  code: string
+  dataType: string
+  unit: string
+  address: string
+  accessMode: string
+  scaleValue: number
+  sortOrder: number
+}
+
+type DeviceForm = {
+  areaId: number | null
+  name: string
+  code: string
+  type: string
+  status: string
+  protocol: string
+  ipAddress: string
+  port: number | null
+  description: string
+}
 
 const fallbackMenus: MenuItem[] = [
   { key: 'overview', label: '首页总览', helper: '运行态势', icon: '⌁' },
@@ -48,27 +70,36 @@ const health = ref<HealthPayload | null>(null)
 const healthText = ref('正在连接')
 const checking = ref(false)
 const loggingIn = ref(false)
+const areas = ref<Area[]>([])
+const devices = ref<Device[]>([])
+const points = ref<Point[]>([])
+const selectedDevice = ref<Device | null>(null)
+const deviceError = ref('')
+const deviceLoading = ref(false)
+const savingDevice = ref(false)
+const editingDeviceId = ref<number | null>(null)
+const areaFilter = ref('')
+const statusFilter = ref('')
+const deviceForm = ref<DeviceForm>(emptyDeviceForm())
 
 const activeItem = computed(() => menuItems.value.find((item) => item.key === activeMenu.value) ?? menuItems.value[0] ?? fallbackMenus[0])
 const dbStatus = computed(() => health.value?.components?.db?.status ?? 'UNKNOWN')
 const redisStatus = computed(() => health.value?.components?.redis?.status ?? 'UNKNOWN')
 const overallStatus = computed(() => health.value?.status ?? 'UNKNOWN')
 const displayName = computed(() => user.value?.displayName ?? '未登录')
-
-const deviceRows = [
-  { name: '一号加压泵站', area: '供水一区', status: '运行', load: '72%', signal: '2.4 s' },
-  { name: '二号换热机组', area: '能源中心', status: '待机', load: '18%', signal: '3.1 s' },
-  { name: '空压站 A 线', area: '动力车间', status: '运行', load: '64%', signal: '1.8 s' },
-  { name: '污水提升井', area: '环保站', status: '告警', load: '91%', signal: '5.7 s' },
-]
+const onlineDeviceCount = computed(() => devices.value.filter((device) => device.status === '运行').length)
+const alarmDeviceCount = computed(() => devices.value.filter((device) => device.status === '告警').length)
 
 const alarmRows = [
   { level: '高', source: '污水提升井', message: '液位超过高高限', time: '19:08:12' },
   { level: '中', source: '空压站 A 线', message: '出口压力波动', time: '19:02:44' },
   { level: '低', source: '二号换热机组', message: '巡检计划待确认', time: '18:55:21' },
 ]
-
 const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
+
+function emptyDeviceForm(): DeviceForm {
+  return { areaId: null, name: '', code: '', type: '泵站', status: '运行', protocol: 'MODBUS_TCP', ipAddress: '127.0.0.1', port: 1502, description: '' }
+}
 
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem(tokenKey)
@@ -84,14 +115,19 @@ async function parseError(response: Response) {
   }
 }
 
+async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const headers = { ...authHeaders(), ...(options.headers as Record<string, string> | undefined) }
+  const response = await fetch(url, { ...options, headers })
+  if (!response.ok) throw new Error(await parseError(response))
+  if (response.status === 204) return undefined as T
+  return (await response.json()) as T
+}
+
 async function checkBackend() {
   checking.value = true
   healthText.value = '正在连接'
   try {
-    const response = await fetch('/api/actuator/health', {
-      signal: AbortSignal.timeout(5000),
-      cache: 'no-store',
-    })
+    const response = await fetch('/api/actuator/health', { signal: AbortSignal.timeout(5000), cache: 'no-store' })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const result = (await response.json()) as HealthPayload
     health.value = result
@@ -108,12 +144,11 @@ async function loadCurrentUser() {
   const token = localStorage.getItem(tokenKey)
   if (!token) return
   try {
-    const response = await fetch('/api/auth/me', { headers: authHeaders(), cache: 'no-store' })
-    if (!response.ok) throw new Error(await parseError(response))
-    const result = (await response.json()) as AuthPayload
+    const result = await apiFetch<AuthPayload>('/api/auth/me', { cache: 'no-store' })
     user.value = result.user
     menuItems.value = result.menus.length ? result.menus : fallbackMenus
     isAuthed.value = true
+    await loadDeviceData()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -145,6 +180,7 @@ async function submitLogin() {
     isAuthed.value = true
     password.value = ''
     await checkBackend()
+    await loadDeviceData()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -163,6 +199,77 @@ async function logout() {
   }
 }
 
+async function loadDeviceData() {
+  deviceLoading.value = true
+  deviceError.value = ''
+  try {
+    if (!areas.value.length) areas.value = await apiFetch<Area[]>('/api/areas')
+    const params = new URLSearchParams()
+    if (areaFilter.value) params.set('areaId', areaFilter.value)
+    if (statusFilter.value) params.set('status', statusFilter.value)
+    devices.value = await apiFetch<Device[]>(`/api/devices${params.toString() ? `?${params}` : ''}`)
+    if (!selectedDevice.value && devices.value.length) await selectDevice(devices.value[0])
+    if (selectedDevice.value && !devices.value.some((device) => device.id === selectedDevice.value?.id)) {
+      selectedDevice.value = null
+      points.value = []
+    }
+  } catch (error) {
+    deviceError.value = error instanceof Error ? error.message : '设备数据加载失败'
+  } finally {
+    deviceLoading.value = false
+  }
+}
+
+async function selectDevice(device: Device) {
+  selectedDevice.value = device
+  points.value = await apiFetch<Point[]>(`/api/points?deviceId=${device.id}`)
+}
+
+function startCreateDevice() {
+  editingDeviceId.value = null
+  deviceForm.value = emptyDeviceForm()
+  deviceForm.value.areaId = areas.value[0]?.id ?? null
+}
+
+function startEditDevice(device: Device) {
+  editingDeviceId.value = device.id
+  deviceForm.value = { ...device }
+}
+
+async function saveDevice() {
+  savingDevice.value = true
+  deviceError.value = ''
+  try {
+    const payload = JSON.stringify(deviceForm.value)
+    if (editingDeviceId.value) {
+      await apiFetch<Device>(`/api/devices/${editingDeviceId.value}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload })
+    } else {
+      await apiFetch<Device>('/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
+    }
+    editingDeviceId.value = null
+    deviceForm.value = emptyDeviceForm()
+    await loadDeviceData()
+  } catch (error) {
+    deviceError.value = error instanceof Error ? error.message : '设备保存失败'
+  } finally {
+    savingDevice.value = false
+  }
+}
+
+async function deleteDevice(device: Device) {
+  deviceError.value = ''
+  try {
+    await apiFetch<void>(`/api/devices/${device.id}`, { method: 'DELETE' })
+    if (selectedDevice.value?.id === device.id) {
+      selectedDevice.value = null
+      points.value = []
+    }
+    await loadDeviceData()
+  } catch (error) {
+    deviceError.value = error instanceof Error ? error.message : '设备删除失败'
+  }
+}
+
 onMounted(async () => {
   await checkBackend()
   await loadCurrentUser()
@@ -177,61 +284,33 @@ onMounted(async () => {
         <h1 id="login-title">工业数据中台</h1>
         <p>面向设备运行、报警响应和生产态势的后台管理入口。</p>
       </div>
-
       <form class="login-card" @submit.prevent="submitLogin">
         <div class="status-strip" role="status" aria-live="polite">
           <span :class="['status-dot', overallStatus === 'UP' ? 'is-ok' : 'is-warn']"></span>
           后端 {{ healthText }} · MySQL {{ dbStatus }} · Redis {{ redisStatus }}
         </div>
-        <label>
-          <span>账号</span>
-          <input v-model="username" autocomplete="username" />
-        </label>
-        <label>
-          <span>密码</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="默认 admin" />
-        </label>
+        <label><span>账号</span><input v-model="username" autocomplete="username" /></label>
+        <label><span>密码</span><input v-model="password" type="password" autocomplete="current-password" placeholder="默认 admin" /></label>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
         <button type="submit" :disabled="loggingIn">{{ loggingIn ? '登录中' : '进入后台' }}</button>
-        <button class="ghost" type="button" :disabled="checking" @click="checkBackend">
-          {{ checking ? '检查中' : '检查连接' }}
-        </button>
+        <button class="ghost" type="button" :disabled="checking" @click="checkBackend">{{ checking ? '检查中' : '检查连接' }}</button>
       </form>
     </section>
   </main>
 
   <main v-else class="app-shell">
     <aside class="sidebar" aria-label="后台菜单">
-      <div class="product-mark">
-        <span class="mark-grid"></span>
-        <div>
-          <strong>Web SCADA</strong>
-          <small>{{ displayName }}</small>
-        </div>
-      </div>
+      <div class="product-mark"><span class="mark-grid"></span><div><strong>Web SCADA</strong><small>{{ displayName }}</small></div></div>
       <nav>
-        <button
-          v-for="item in menuItems"
-          :key="item.key"
-          :class="['nav-item', { active: activeMenu === item.key }]"
-          type="button"
-          @click="activeMenu = item.key"
-        >
-          <span class="nav-icon" aria-hidden="true">{{ item.icon }}</span>
-          <span>
-            <strong>{{ item.label }}</strong>
-            <small>{{ item.helper }}</small>
-          </span>
+        <button v-for="item in menuItems" :key="item.key" :class="['nav-item', { active: activeMenu === item.key }]" type="button" @click="activeMenu = item.key">
+          <span class="nav-icon" aria-hidden="true">{{ item.icon }}</span><span><strong>{{ item.label }}</strong><small>{{ item.helper }}</small></span>
         </button>
       </nav>
     </aside>
 
     <section class="workspace">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">{{ activeItem.helper }}</p>
-          <h2>{{ activeItem.label }}</h2>
-        </div>
+        <div><p class="eyebrow">{{ activeItem.helper }}</p><h2>{{ activeItem.label }}</h2></div>
         <div class="top-actions">
           <span class="user-chip">{{ displayName }}</span>
           <span class="health-pill"><span class="status-dot is-ok"></span> MySQL {{ dbStatus }}</span>
@@ -242,91 +321,70 @@ onMounted(async () => {
       </header>
 
       <section v-if="activeMenu === 'overview'" class="content-grid overview-grid">
-        <article class="metric-card strong">
-          <span>系统状态</span>
-          <strong>{{ overallStatus }}</strong>
-          <small>Actuator 健康检查</small>
-        </article>
-        <article class="metric-card">
-          <span>在线设备</span>
-          <strong>128</strong>
-          <small>模拟站点资产</small>
-        </article>
-        <article class="metric-card warn">
-          <span>当前报警</span>
-          <strong>3</strong>
-          <small>待确认事件</small>
-        </article>
-        <article class="metric-card">
-          <span>采集延迟</span>
-          <strong>2.8s</strong>
-          <small>最近 5 分钟均值</small>
-        </article>
-        <article class="panel wide">
-          <div class="panel-head">
-            <h3>实时负载趋势</h3>
-            <span>模拟数据</span>
-          </div>
-          <div class="trend" aria-label="实时负载趋势模拟图">
-            <span v-for="(bar, index) in trendBars" :key="index" :style="{ height: `${bar}%` }"></span>
-          </div>
-        </article>
-        <article class="panel">
-          <div class="panel-head">
-            <h3>连接状态</h3>
-            <span>{{ healthText }}</span>
-          </div>
-          <dl class="status-list">
-            <dt>后端</dt><dd>{{ overallStatus }}</dd>
-            <dt>MySQL</dt><dd>{{ dbStatus }}</dd>
-            <dt>Redis</dt><dd>{{ redisStatus }}</dd>
-          </dl>
-        </article>
+        <article class="metric-card strong"><span>系统状态</span><strong>{{ overallStatus }}</strong><small>Actuator 健康检查</small></article>
+        <article class="metric-card"><span>设备总数</span><strong>{{ devices.length }}</strong><small>来自 MySQL 设备台账</small></article>
+        <article class="metric-card"><span>运行设备</span><strong>{{ onlineDeviceCount }}</strong><small>状态为运行</small></article>
+        <article class="metric-card warn"><span>告警设备</span><strong>{{ alarmDeviceCount }}</strong><small>状态为告警</small></article>
+        <article class="panel wide"><div class="panel-head"><h3>实时负载趋势</h3><span>模拟数据</span></div><div class="trend" aria-label="实时负载趋势模拟图"><span v-for="(bar, index) in trendBars" :key="index" :style="{ height: `${bar}%` }"></span></div></article>
+        <article class="panel"><div class="panel-head"><h3>连接状态</h3><span>{{ healthText }}</span></div><dl class="status-list"><dt>后端</dt><dd>{{ overallStatus }}</dd><dt>MySQL</dt><dd>{{ dbStatus }}</dd><dt>Redis</dt><dd>{{ redisStatus }}</dd></dl></article>
       </section>
 
-      <section v-else-if="activeMenu === 'devices' || activeMenu === 'monitor'" class="panel page-panel">
-        <div class="panel-head">
-          <h3>{{ activeMenu === 'devices' ? '设备台账' : '实时采集点位' }}</h3>
-          <span>基础骨架</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>对象</th><th>区域</th><th>状态</th><th>负载</th><th>通讯</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in deviceRows" :key="row.name">
-                <td>{{ row.name }}</td>
-                <td>{{ row.area }}</td>
-                <td><span :class="['tag', row.status === '告警' ? 'danger' : row.status === '待机' ? 'idle' : 'ok']">{{ row.status }}</span></td>
-                <td>{{ row.load }}</td>
-                <td>{{ row.signal }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <section v-else-if="activeMenu === 'devices'" class="device-layout">
+        <section class="panel page-panel">
+          <div class="panel-head"><h3>设备台账</h3><span>{{ deviceLoading ? '加载中' : `${devices.length} 台设备` }}</span></div>
+          <div class="toolbar">
+            <label><span>区域</span><select v-model="areaFilter" @change="loadDeviceData"><option value="">全部区域</option><option v-for="area in areas" :key="area.id" :value="String(area.id)">{{ area.name }}</option></select></label>
+            <label><span>状态</span><select v-model="statusFilter" @change="loadDeviceData"><option value="">全部状态</option><option>运行</option><option>待机</option><option>告警</option><option>离线</option></select></label>
+            <button class="ghost compact" type="button" @click="loadDeviceData">刷新</button>
+            <button class="primary compact" type="button" @click="startCreateDevice">新建设备</button>
+          </div>
+          <p v-if="deviceError" class="form-error">{{ deviceError }}</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>设备</th><th>区域</th><th>状态</th><th>协议</th><th>通讯地址</th><th>点位</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr v-for="device in devices" :key="device.id" :class="{ selected: selectedDevice?.id === device.id }">
+                  <td><button class="link-button" type="button" @click="selectDevice(device)">{{ device.name }}<small>{{ device.code }}</small></button></td>
+                  <td>{{ device.areaName }}</td>
+                  <td><span :class="['tag', device.status === '告警' ? 'danger' : device.status === '待机' ? 'idle' : 'ok']">{{ device.status }}</span></td>
+                  <td>{{ device.protocol }}</td>
+                  <td>{{ device.ipAddress }}{{ device.port ? `:${device.port}` : '' }}</td>
+                  <td>{{ device.pointCount }}</td>
+                  <td class="row-actions"><button class="ghost compact" type="button" @click="startEditDevice(device)">编辑</button><button class="ghost compact" type="button" @click="deleteDevice(device)">删除</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="panel side-panel">
+          <div class="panel-head"><h3>{{ editingDeviceId ? '编辑设备' : '设备维护' }}</h3><span>{{ selectedDevice?.name ?? '未选择' }}</span></div>
+          <form class="device-form" @submit.prevent="saveDevice">
+            <label><span>区域</span><select v-model.number="deviceForm.areaId"><option :value="null">请选择</option><option v-for="area in areas" :key="area.id" :value="area.id">{{ area.name }}</option></select></label>
+            <label><span>名称</span><input v-model="deviceForm.name" /></label>
+            <label><span>编码</span><input v-model="deviceForm.code" /></label>
+            <label><span>类型</span><input v-model="deviceForm.type" /></label>
+            <label><span>状态</span><select v-model="deviceForm.status"><option>运行</option><option>待机</option><option>告警</option><option>离线</option></select></label>
+            <label><span>协议</span><select v-model="deviceForm.protocol"><option>MODBUS_TCP</option><option>MQTT</option><option>OPC_UA</option><option>HTTP</option></select></label>
+            <label><span>IP 地址</span><input v-model="deviceForm.ipAddress" /></label>
+            <label><span>端口</span><input v-model.number="deviceForm.port" type="number" /></label>
+            <label class="span-2"><span>说明</span><input v-model="deviceForm.description" /></label>
+            <button class="primary" type="submit" :disabled="savingDevice">{{ savingDevice ? '保存中' : editingDeviceId ? '保存修改' : '创建设备' }}</button>
+          </form>
+
+          <div class="point-list">
+            <div class="panel-head"><h3>设备点位</h3><span>{{ points.length }} 个</span></div>
+            <article v-for="point in points" :key="point.id"><strong>{{ point.name }}</strong><small>{{ point.code }} · {{ point.dataType }} · {{ point.address }} {{ point.unit }}</small></article>
+            <p v-if="!points.length" class="muted">选择设备后查看点位。</p>
+          </div>
+        </aside>
       </section>
 
-      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel">
-        <div class="panel-head">
-          <h3>报警事件</h3>
-          <span>待确认 3 条</span>
-        </div>
-        <div class="alarm-list">
-          <article v-for="alarm in alarmRows" :key="alarm.time">
-            <span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span>
-            <div><strong>{{ alarm.message }}</strong><small>{{ alarm.source }} · {{ alarm.time }}</small></div>
-            <button class="ghost compact" type="button">确认</button>
-          </article>
-        </div>
-      </section>
+      <section v-else-if="activeMenu === 'monitor'" class="panel page-panel"><div class="panel-head"><h3>实时采集点位</h3><span>来自设备台账</span></div><div class="table-wrap"><table><thead><tr><th>设备</th><th>区域</th><th>状态</th><th>点位数</th><th>协议</th></tr></thead><tbody><tr v-for="device in devices" :key="device.id"><td>{{ device.name }}</td><td>{{ device.areaName }}</td><td>{{ device.status }}</td><td>{{ device.pointCount }}</td><td>{{ device.protocol }}</td></tr></tbody></table></div></section>
 
-      <section v-else class="empty-state">
-        <p class="eyebrow">{{ activeItem.label }}</p>
-        <h3>{{ activeItem.label }}页面骨架已预留</h3>
-        <p>当前阶段已接入后端登录、Redis 会话和数据库菜单，后续可继续扩展真实业务接口、权限与数据模型。</p>
-      </section>
+      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>待确认 3 条</span></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.time"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }}</strong><small>{{ alarm.source }} · {{ alarm.time }}</small></div><button class="ghost compact" type="button">确认</button></article></div></section>
+
+      <section v-else class="empty-state"><p class="eyebrow">{{ activeItem.label }}</p><h3>{{ activeItem.label }}页面骨架已预留</h3><p>当前阶段已接入设备、区域和点位数据模型，后续可继续扩展实时采集、报警规则和历史数据。</p></section>
     </section>
   </main>
 </template>
-
