@@ -7,6 +7,7 @@ type MenuItem = { key: string; label: string; helper: string; icon: string; sort
 type AuthUser = { id: number; username: string; displayName: string }
 type AuthPayload = { token?: string; user: AuthUser; menus: MenuItem[] }
 type ApiError = { message?: string }
+type DictItem = { typeCode: string; itemCode: string; label: string; description: string; sortOrder: number }
 type Area = { id: number; name: string; code: string; description: string }
 type Device = {
   id: number
@@ -81,6 +82,7 @@ const healthText = ref('正在连接')
 const checking = ref(false)
 const loggingIn = ref(false)
 const areas = ref<Area[]>([])
+const dictionaries = ref<Record<string, DictItem[]>>({})
 const devices = ref<Device[]>([])
 const points = ref<Point[]>([])
 const selectedDevice = ref<Device | null>(null)
@@ -102,6 +104,12 @@ const overallStatus = computed(() => health.value?.status ?? 'UNKNOWN')
 const displayName = computed(() => user.value?.displayName ?? '未登录')
 const onlineDeviceCount = computed(() => devices.value.filter((device) => device.status === '运行').length)
 const alarmDeviceCount = computed(() => devices.value.filter((device) => device.status === '告警').length)
+const deviceStatusOptions = computed(() => dictItems('device_status'))
+const deviceProtocolOptions = computed(() => dictItems('device_protocol'))
+const deviceTypeOptions = computed(() => dictItems('device_type'))
+const pointDataTypeOptions = computed(() => dictItems('point_data_type'))
+const pointAccessModeOptions = computed(() => dictItems('point_access_mode'))
+const pointUnitOptions = computed(() => dictItems('point_unit'))
 
 const alarmRows = [
   { level: '高', source: '出口压力变送器', message: '压力超过高限', time: '19:08:12' },
@@ -116,6 +124,18 @@ function emptyDeviceForm(): DeviceForm {
 
 function emptyPointForm(): PointForm {
   return { name: '', code: '', dataType: 'DECIMAL', unit: '', address: '', accessMode: 'R', scaleValue: 1, sortOrder: 10 }
+}
+
+function dictItems(typeCode: string) {
+  const fallback: Record<string, DictItem[]> = {
+    device_status: ['运行', '待机', '告警', '离线'].map((value, index) => ({ typeCode, itemCode: value, label: value, description: '', sortOrder: index })),
+    device_protocol: ['MODBUS_TCP', 'MQTT', 'OPC_UA', 'HTTP'].map((value, index) => ({ typeCode, itemCode: value, label: value, description: '', sortOrder: index })),
+    device_type: ['闸门', '水泵', '仪表', 'PLC', '网关', '变频器'].map((value, index) => ({ typeCode, itemCode: value, label: value, description: '', sortOrder: index })),
+    point_data_type: ['DECIMAL', 'INTEGER', 'BOOLEAN', 'STRING'].map((value, index) => ({ typeCode, itemCode: value, label: value, description: '', sortOrder: index })),
+    point_access_mode: ['R', 'W', 'RW'].map((value, index) => ({ typeCode, itemCode: value, label: value, description: '', sortOrder: index })),
+    point_unit: ['%', 'MPa', 'Hz', 'A', 'm', 'C', ''].map((value, index) => ({ typeCode, itemCode: value, label: value || '无单位', description: '', sortOrder: index })),
+  }
+  return dictionaries.value[typeCode]?.length ? dictionaries.value[typeCode] : fallback[typeCode] ?? []
 }
 
 function authHeaders(): Record<string, string> {
@@ -173,6 +193,10 @@ async function loadCurrentUser() {
   }
 }
 
+async function loadDictionaries() {
+  dictionaries.value = await apiFetch<Record<string, DictItem[]>>('/api/dictionaries/items?typeCodes=device_status,device_protocol,device_type,point_data_type,point_access_mode,point_unit')
+}
+
 async function submitLogin() {
   loginError.value = ''
   const account = username.value.trim()
@@ -197,6 +221,7 @@ async function submitLogin() {
     isAuthed.value = true
     password.value = ''
     await checkBackend()
+    await loadDictionaries()
     await loadDeviceData()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
@@ -220,6 +245,7 @@ async function loadDeviceData() {
   deviceLoading.value = true
   deviceError.value = ''
   try {
+    if (!Object.keys(dictionaries.value).length) await loadDictionaries()
     if (!areas.value.length) areas.value = await apiFetch<Area[]>('/api/areas')
     const params = new URLSearchParams()
     if (areaFilter.value) params.set('areaId', areaFilter.value)
@@ -409,7 +435,7 @@ onMounted(async () => {
           <div class="panel-head"><h3>设备台账</h3><span>{{ deviceLoading ? '加载中' : `${devices.length} 台设备` }}</span></div>
           <div class="toolbar">
             <label><span>区域</span><select v-model="areaFilter" @change="loadDeviceData"><option value="">全部区域</option><option v-for="area in areas" :key="area.id" :value="String(area.id)">{{ area.name }}</option></select></label>
-            <label><span>状态</span><select v-model="statusFilter" @change="loadDeviceData"><option value="">全部状态</option><option>运行</option><option>待机</option><option>告警</option><option>离线</option></select></label>
+            <label><span>状态</span><select v-model="statusFilter" @change="loadDeviceData"><option value="">全部状态</option><option v-for="item in deviceStatusOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
             <button class="ghost compact" type="button" @click="loadDeviceData">刷新</button>
             <button class="primary compact" type="button" @click="startCreateDevice">新建设备</button>
           </div>
@@ -438,9 +464,9 @@ onMounted(async () => {
             <label><span>区域</span><select v-model.number="deviceForm.areaId"><option :value="null">请选择</option><option v-for="area in areas" :key="area.id" :value="area.id">{{ area.name }}</option></select></label>
             <label><span>名称</span><input v-model="deviceForm.name" /></label>
             <label><span>编码</span><input v-model="deviceForm.code" /></label>
-            <label><span>类型</span><input v-model="deviceForm.type" /></label>
-            <label><span>状态</span><select v-model="deviceForm.status"><option>运行</option><option>待机</option><option>告警</option><option>离线</option></select></label>
-            <label><span>协议</span><select v-model="deviceForm.protocol"><option>MODBUS_TCP</option><option>MQTT</option><option>OPC_UA</option><option>HTTP</option></select></label>
+            <label><span>类型</span><select v-model="deviceForm.type"><option v-for="item in deviceTypeOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
+            <label><span>状态</span><select v-model="deviceForm.status"><option v-for="item in deviceStatusOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
+            <label><span>协议</span><select v-model="deviceForm.protocol"><option v-for="item in deviceProtocolOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
             <label><span>IP 地址</span><input v-model="deviceForm.ipAddress" /></label>
             <label><span>端口</span><input v-model.number="deviceForm.port" type="number" /></label>
             <label class="span-2"><span>说明</span><input v-model="deviceForm.description" /></label>
@@ -455,9 +481,9 @@ onMounted(async () => {
             <form class="point-form" @submit.prevent="savePoint">
               <label><span>名称</span><input v-model="pointForm.name" :disabled="!selectedDevice" /></label>
               <label><span>编码</span><input v-model="pointForm.code" :disabled="!selectedDevice" /></label>
-              <label><span>数据类型</span><select v-model="pointForm.dataType" :disabled="!selectedDevice"><option>DECIMAL</option><option>INTEGER</option><option>BOOLEAN</option><option>STRING</option></select></label>
-              <label><span>读写</span><select v-model="pointForm.accessMode" :disabled="!selectedDevice"><option>R</option><option>W</option><option>RW</option></select></label>
-              <label><span>单位</span><input v-model="pointForm.unit" :disabled="!selectedDevice" /></label>
+              <label><span>数据类型</span><select v-model="pointForm.dataType" :disabled="!selectedDevice"><option v-for="item in pointDataTypeOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
+              <label><span>读写</span><select v-model="pointForm.accessMode" :disabled="!selectedDevice"><option v-for="item in pointAccessModeOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
+              <label><span>单位</span><select v-model="pointForm.unit" :disabled="!selectedDevice"><option v-for="item in pointUnitOptions" :key="item.itemCode || 'none'" :value="item.itemCode">{{ item.label }}</option></select></label>
               <label><span>地址</span><input v-model="pointForm.address" :disabled="!selectedDevice" /></label>
               <label><span>缩放</span><input v-model.number="pointForm.scaleValue" type="number" step="0.0001" :disabled="!selectedDevice" /></label>
               <label><span>排序</span><input v-model.number="pointForm.sortOrder" type="number" :disabled="!selectedDevice" /></label>

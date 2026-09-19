@@ -25,6 +25,7 @@ public class DatabaseInitializer implements ApplicationRunner {
         createScadaTables();
         seedRole();
         seedMenus();
+        seedDictionaries();
         seedAdminUser();
         linkAdminPermissions();
         seedScadaCatalog();
@@ -81,6 +82,31 @@ public class DatabaseInitializer implements ApplicationRunner {
                     action varchar(64) not null,
                     detail varchar(255) not null,
                     created_at timestamp not null default current_timestamp
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table if not exists sys_dict_type (
+                    id bigint primary key auto_increment,
+                    type_code varchar(64) not null unique,
+                    name varchar(128) not null,
+                    description varchar(255) not null default '',
+                    sort_order int not null default 0,
+                    enabled tinyint not null default 1,
+                    created_at timestamp not null default current_timestamp
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table if not exists sys_dict_item (
+                    id bigint primary key auto_increment,
+                    type_id bigint not null,
+                    item_code varchar(64) not null,
+                    label varchar(128) not null,
+                    description varchar(255) not null default '',
+                    sort_order int not null default 0,
+                    enabled tinyint not null default 1,
+                    created_at timestamp not null default current_timestamp,
+                    unique key uk_sys_dict_item_type_code(type_id, item_code),
+                    index idx_sys_dict_item_type(type_id)
                 )
                 """);
     }
@@ -153,6 +179,75 @@ public class DatabaseInitializer implements ApplicationRunner {
                     values (?, ?, ?, ?, ?, 1)
                     on duplicate key update label = values(label), helper = values(helper), icon = values(icon), sort_order = values(sort_order), enabled = 1
                     """, menu.key(), menu.label(), menu.helper(), menu.icon(), menu.sortOrder());
+        }
+    }
+
+    private void seedDictionaries() {
+        seedDictionaryType("device_status", "设备状态", "设备台账运行状态", 10);
+        seedDictionaryType("device_protocol", "通讯协议", "设备通讯协议类型", 20);
+        seedDictionaryType("device_type", "设备类型", "独立设备分类", 30);
+        seedDictionaryType("point_data_type", "点位数据类型", "采集点位值类型", 40);
+        seedDictionaryType("point_access_mode", "点位读写属性", "采集点位读写能力", 50);
+        seedDictionaryType("point_unit", "点位单位", "常用工程单位", 60);
+
+        seedDictionaryItems("device_status", List.of(
+                new DictItemSeed("运行", "运行", "设备处于运行态", 10),
+                new DictItemSeed("待机", "待机", "设备可用但未运行", 20),
+                new DictItemSeed("告警", "告警", "设备存在报警或异常", 30),
+                new DictItemSeed("离线", "离线", "设备通讯不可用", 40)
+        ));
+        seedDictionaryItems("device_protocol", List.of(
+                new DictItemSeed("MODBUS_TCP", "Modbus TCP", "TCP 模式 Modbus 协议", 10),
+                new DictItemSeed("MQTT", "MQTT", "消息订阅发布协议", 20),
+                new DictItemSeed("OPC_UA", "OPC UA", "OPC UA 工业互联协议", 30),
+                new DictItemSeed("HTTP", "HTTP", "HTTP 接口采集", 40)
+        ));
+        seedDictionaryItems("device_type", List.of(
+                new DictItemSeed("闸门", "闸门", "闸门或阀门执行设备", 10),
+                new DictItemSeed("水泵", "水泵", "泵类动力设备", 20),
+                new DictItemSeed("仪表", "仪表", "压力、液位、流量等仪表", 30),
+                new DictItemSeed("PLC", "PLC", "控制器或远程 IO", 40),
+                new DictItemSeed("网关", "网关", "协议网关或边缘采集器", 50),
+                new DictItemSeed("变频器", "变频器", "变频驱动设备", 60)
+        ));
+        seedDictionaryItems("point_data_type", List.of(
+                new DictItemSeed("DECIMAL", "小数", "浮点或定点数值", 10),
+                new DictItemSeed("INTEGER", "整数", "整数数值", 20),
+                new DictItemSeed("BOOLEAN", "布尔", "开关量或状态量", 30),
+                new DictItemSeed("STRING", "字符串", "文本值", 40)
+        ));
+        seedDictionaryItems("point_access_mode", List.of(
+                new DictItemSeed("R", "只读", "采集读取", 10),
+                new DictItemSeed("W", "只写", "控制写入", 20),
+                new DictItemSeed("RW", "读写", "可读可写", 30)
+        ));
+        seedDictionaryItems("point_unit", List.of(
+                new DictItemSeed("%", "%", "百分比", 10),
+                new DictItemSeed("MPa", "MPa", "压力", 20),
+                new DictItemSeed("Hz", "Hz", "频率", 30),
+                new DictItemSeed("A", "A", "电流", 40),
+                new DictItemSeed("m", "m", "长度或液位", 50),
+                new DictItemSeed("C", "℃", "温度", 60),
+                new DictItemSeed("", "无单位", "无工程单位", 70)
+        ));
+    }
+
+    private void seedDictionaryType(String typeCode, String name, String description, int sortOrder) {
+        jdbcTemplate.update("""
+                insert into sys_dict_type(type_code, name, description, sort_order, enabled)
+                values (?, ?, ?, ?, 1)
+                on duplicate key update name = values(name), description = values(description), sort_order = values(sort_order), enabled = 1
+                """, typeCode, name, description, sortOrder);
+    }
+
+    private void seedDictionaryItems(String typeCode, List<DictItemSeed> items) {
+        Long typeId = jdbcTemplate.queryForObject("select id from sys_dict_type where type_code = ?", Long.class, typeCode);
+        for (DictItemSeed item : items) {
+            jdbcTemplate.update("""
+                    insert into sys_dict_item(type_id, item_code, label, description, sort_order, enabled)
+                    values (?, ?, ?, ?, ?, 1)
+                    on duplicate key update label = values(label), description = values(description), sort_order = values(sort_order), enabled = 1
+                    """, typeId, item.code(), item.label(), item.description(), item.sortOrder());
         }
     }
 
@@ -271,6 +366,9 @@ public class DatabaseInitializer implements ApplicationRunner {
     }
 
     private record MenuSeed(String key, String label, String helper, String icon, int sortOrder) {
+    }
+
+    private record DictItemSeed(String code, String label, String description, int sortOrder) {
     }
 
     private record AreaSeed(String name, String code, String description) {

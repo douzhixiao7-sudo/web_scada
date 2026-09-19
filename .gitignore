@@ -8,6 +8,7 @@ frontend/dist/
 !.env.example
 *.pem
 *.key
+dump.rdb
 .idea/
 .vscode/
 *.log
