@@ -1,0 +1,20 @@
+[
+  {
+    "sha256": "F9D6E191AB098C0D416E7D588A24420A8621CD2F4720DAB2459B8B7B2D2D8B4E",
+    "folder": "jdk-21.0.12.1+1",
+    "url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip",
+    "name": "Java 21"
+  },
+  {
+    "sha256": "158F7685B44DE51F6C0DF1D153526CBCD3E1BC739A8DFC607721CEF75DE9E541",
+    "folder": "node-v24.21.0-win-x64",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+    "name": "Node.js 24"
+  },
+  {
+    "sha256": "5AF3B743DD8B876B5C45DA33B676251E5F1687712644ABB4EE519CA56E1D89CE",
+    "folder": "apache-maven-3.9.16",
+    "url": "https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.16/apache-maven-3.9.16-bin.zip",
+    "name": "Maven 3"
+  }
+]

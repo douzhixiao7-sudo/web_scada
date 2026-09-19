@@ -1,0 +1,13 @@
+backend/target/
+frontend/node_modules/
+frontend/dist/
+.run/
+.local/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.idea/
+.vscode/
+*.log
