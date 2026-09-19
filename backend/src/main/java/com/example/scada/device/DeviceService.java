@@ -71,7 +71,8 @@ public class DeviceService {
     public List<PointResponse> listPoints(Long deviceId) {
         ensureDeviceExists(deviceId);
         return jdbcTemplate.query("""
-                select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order
+                select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order,
+                       source_group, source_sheet, io_module, io_type, modbus_type, sixnet_address, iconics_path, remark
                 from scada_point
                 where device_id = ?
                 order by sort_order, id
@@ -85,7 +86,15 @@ public class DeviceService {
                 rs.getString("address"),
                 rs.getString("access_mode"),
                 rs.getDouble("scale_value"),
-                rs.getInt("sort_order")
+                rs.getInt("sort_order"),
+                rs.getString("source_group"),
+                rs.getString("source_sheet"),
+                rs.getString("io_module"),
+                rs.getString("io_type"),
+                rs.getString("modbus_type"),
+                rs.getString("sixnet_address"),
+                rs.getString("iconics_path"),
+                rs.getString("remark")
         ), deviceId);
     }
 
@@ -182,7 +191,8 @@ public class DeviceService {
 
     private PointResponse getPoint(Long deviceId, Long pointId) {
         List<PointResponse> points = jdbcTemplate.query("""
-                select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order
+                select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order,
+                       source_group, source_sheet, io_module, io_type, modbus_type, sixnet_address, iconics_path, remark
                 from scada_point
                 where id = ? and device_id = ?
                 """, (rs, rowNum) -> new PointResponse(
@@ -195,7 +205,15 @@ public class DeviceService {
                 rs.getString("address"),
                 rs.getString("access_mode"),
                 rs.getDouble("scale_value"),
-                rs.getInt("sort_order")
+                rs.getInt("sort_order"),
+                rs.getString("source_group"),
+                rs.getString("source_sheet"),
+                rs.getString("io_module"),
+                rs.getString("io_type"),
+                rs.getString("modbus_type"),
+                rs.getString("sixnet_address"),
+                rs.getString("iconics_path"),
+                rs.getString("remark")
         ), pointId, deviceId);
         if (points.isEmpty()) {
             throw new IllegalArgumentException("点位不存在");

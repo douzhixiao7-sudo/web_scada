@@ -10,5 +10,13 @@ public record PointResponse(
         String address,
         String accessMode,
         Double scaleValue,
-        Integer sortOrder) {
+        Integer sortOrder,
+        String sourceGroup,
+        String sourceSheet,
+        String ioModule,
+        String ioType,
+        String modbusType,
+        String sixnetAddress,
+        String iconicsPath,
+        String remark) {
 }

@@ -34,7 +34,16 @@ type Point = {
   accessMode: string
   scaleValue: number
   sortOrder: number
+  sourceGroup: string
+  sourceSheet: string
+  ioModule: string
+  ioType: string
+  modbusType: string
+  sixnetAddress: string
+  iconicsPath: string
+  remark: string
 }
+type RealtimeValue = { pointId: number; deviceId: number; pointCode: string; value: string; quality: string; collectedAt: string }
 
 type DeviceForm = {
   areaId: number | null
@@ -85,6 +94,7 @@ const areas = ref<Area[]>([])
 const dictionaries = ref<Record<string, DictItem[]>>({})
 const devices = ref<Device[]>([])
 const points = ref<Point[]>([])
+const realtimeValues = ref<Record<number, RealtimeValue>>({})
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -281,9 +291,19 @@ async function loadDeviceData() {
 
 async function selectDevice(device: Device) {
   selectedDevice.value = device
-  points.value = await apiFetch<Point[]>(`/api/points?deviceId=${device.id}`)
+  monitorDeviceId.value = device.id
+  const [pointRows, valueRows] = await Promise.all([
+    apiFetch<Point[]>(`/api/points?deviceId=${device.id}`),
+    apiFetch<RealtimeValue[]>(`/api/realtime/values?deviceId=${device.id}`),
+  ])
+  points.value = pointRows
+  realtimeValues.value = Object.fromEntries(valueRows.map((value) => [value.pointId, value]))
   editingPointId.value = null
   pointForm.value = emptyPointForm()
+}
+
+function realtimeValue(point: Point) {
+  return realtimeValues.value[point.id]
 }
 
 function startCreateDevice() {
@@ -530,16 +550,17 @@ onMounted(async () => {
           </div>
           <div class="table-wrap">
             <table class="monitor-table">
-              <thead><tr><th>点位</th><th>数据类型</th><th>地址</th><th>读写</th><th>当前值</th><th>质量</th><th>采集时间</th></tr></thead>
+              <thead><tr><th>点位</th><th>现场来源</th><th>数据类型</th><th>Modbus 地址</th><th>读写</th><th>当前值</th><th>质量</th><th>采集时间</th></tr></thead>
               <tbody>
                 <tr v-for="point in points" :key="point.id">
                   <td><strong>{{ point.name }}</strong><small>{{ point.code }}</small></td>
+                  <td>{{ point.sourceGroup || '-' }}<small>{{ point.ioType || point.sourceSheet }}</small></td>
                   <td>{{ point.dataType }}<small>{{ point.unit || '无单位' }}</small></td>
-                  <td>{{ point.address }}</td>
+                  <td>{{ point.address || '-' }}<small>{{ point.modbusType ? `类型 ${point.modbusType}` : point.ioModule }}</small></td>
                   <td>{{ point.accessMode }}</td>
-                  <td><span class="placeholder-value">待接入</span></td>
-                  <td><span class="tag idle">未采集</span></td>
-                  <td>等待实时接口</td>
+                  <td><span class="placeholder-value">{{ realtimeValue(point)?.value ?? '待接入' }}{{ point.unit && realtimeValue(point) ? ` ${point.unit}` : '' }}</span></td>
+                  <td><span :class="['tag', realtimeValue(point)?.quality === 'GOOD' ? 'ok' : realtimeValue(point)?.quality === 'BAD' ? 'danger' : 'idle']">{{ realtimeValue(point)?.quality ?? '未采集' }}</span></td>
+                  <td>{{ realtimeValue(point)?.collectedAt ? new Date(realtimeValue(point)!.collectedAt).toLocaleTimeString() : '等待实时接口' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -548,7 +569,7 @@ onMounted(async () => {
         <aside class="panel monitor-side">
           <div class="panel-head"><h3>实时值接口契约</h3><span>MVP 预留</span></div>
           <dl class="status-list contract-list"><dt>pointId</dt><dd>点位 ID</dd><dt>value</dt><dd>当前值</dd><dt>quality</dt><dd>GOOD / BAD / STALE</dd><dt>collectedAt</dt><dd>采集时间</dd></dl>
-          <p class="muted">当前阶段只展示监控结构和点位清单，不做仿真 PLC，不写实时值表。</p>
+          <p class="muted">当前阶段按金斗河现场点表生成开发期模拟值，不接真实 PLC，不写实时值表。</p>
         </aside>
       </section>
 
@@ -558,4 +579,5 @@ onMounted(async () => {
     </section>
   </main>
 </template>
+
 

@@ -1,6 +1,13 @@
 package com.example.scada.system;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -156,6 +163,25 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_point_device(device_id)
                 )
                 """);
+        addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
+        addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
+        addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");
+        addColumnIfMissing("scada_point", "io_type", "varchar(32) not null default ''");
+        addColumnIfMissing("scada_point", "modbus_type", "varchar(32) not null default ''");
+        addColumnIfMissing("scada_point", "sixnet_address", "varchar(64) not null default ''");
+        addColumnIfMissing("scada_point", "iconics_path", "varchar(255) not null default ''");
+        addColumnIfMissing("scada_point", "remark", "varchar(255) not null default ''");
+    }
+
+    private void addColumnIfMissing(String tableName, String columnName, String definition) {
+        Integer count = jdbcTemplate.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database() and table_name = ? and column_name = ?
+                """, Integer.class, tableName, columnName);
+        if (count == null || count == 0) {
+            jdbcTemplate.execute("alter table " + tableName + " add column " + columnName + " " + definition);
+        }
     }
 
     private void seedRole() {
@@ -273,9 +299,9 @@ public class DatabaseInitializer implements ApplicationRunner {
 
     private void seedScadaCatalog() {
         seedAreas();
-        seedDevices();
         cleanupLegacyDemoPoints();
-        seedPoints();
+        cleanupLegacyDemoDevices();
+        seedJindouhePointTable();
     }
 
     private void seedAreas() {
@@ -294,46 +320,6 @@ public class DatabaseInitializer implements ApplicationRunner {
         }
     }
 
-    private void seedDevices() {
-        List<DeviceSeed> devices = List.of(
-                new DeviceSeed(areaId("AREA-WATER-01"), "1#进水闸门", "DEV-PUMP-001", "闸门", "运行", "MODBUS_TCP", "127.0.0.1", 1502, "独立闸门执行设备，挂载开度与到位反馈点位"),
-                new DeviceSeed(areaId("AREA-WATER-01"), "2#进水闸门", "DEV-HEAT-002", "闸门", "待机", "MODBUS_TCP", "127.0.0.1", 1503, "独立闸门执行设备，挂载开关到位与故障点位"),
-                new DeviceSeed(areaId("AREA-ENERGY"), "1#加压泵", "DEV-AIR-A", "水泵", "运行", "MQTT", "127.0.0.1", 1883, "独立泵设备，挂载频率、电流和运行状态点位"),
-                new DeviceSeed(areaId("AREA-POWER"), "出口压力变送器", "DEV-WASTE-LIFT", "仪表", "告警", "MODBUS_TCP", "127.0.0.1", 1504, "独立压力仪表，挂载压力值和报警状态点位")
-        );
-        for (DeviceSeed device : devices) {
-            jdbcTemplate.update("""
-                    insert into scada_device(area_id, name, code, type, status, protocol, ip_address, port, description)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    on duplicate key update area_id = values(area_id), name = values(name), type = values(type), status = values(status),
-                        protocol = values(protocol), ip_address = values(ip_address), port = values(port), description = values(description)
-                    """, device.areaId(), device.name(), device.code(), device.type(), device.status(), device.protocol(), device.ipAddress(), device.port(), device.description());
-        }
-    }
-
-    private void seedPoints() {
-        seedDevicePoints("DEV-PUMP-001", List.of(
-                new PointSeed("开度反馈", "OPENING_FEEDBACK", "DECIMAL", "%", "40001", "R", 1.0, 10),
-                new PointSeed("开到位", "OPEN_LIMIT", "BOOLEAN", "", "00001", "R", 1.0, 20),
-                new PointSeed("关到位", "CLOSE_LIMIT", "BOOLEAN", "", "00002", "R", 1.0, 30)
-        ));
-        seedDevicePoints("DEV-HEAT-002", List.of(
-                new PointSeed("开度反馈", "OPENING_FEEDBACK", "DECIMAL", "%", "40011", "R", 1.0, 10),
-                new PointSeed("远程允许", "REMOTE_ENABLE", "BOOLEAN", "", "00011", "R", 1.0, 20),
-                new PointSeed("故障状态", "FAULT_STATE", "BOOLEAN", "", "00012", "R", 1.0, 30)
-        ));
-        seedDevicePoints("DEV-AIR-A", List.of(
-                new PointSeed("频率反馈", "FREQ_FEEDBACK", "DECIMAL", "Hz", "pump/1/frequency", "R", 1.0, 10),
-                new PointSeed("电机电流", "MOTOR_CURRENT", "DECIMAL", "A", "pump/1/current", "R", 1.0, 20),
-                new PointSeed("运行状态", "RUN_STATE", "BOOLEAN", "", "pump/1/run", "R", 1.0, 30)
-        ));
-        seedDevicePoints("DEV-WASTE-LIFT", List.of(
-                new PointSeed("压力值", "PRESSURE_VALUE", "DECIMAL", "MPa", "40021", "R", 1.0, 10),
-                new PointSeed("高压报警", "HIGH_PRESSURE_ALARM", "BOOLEAN", "", "00021", "R", 1.0, 20),
-                new PointSeed("通讯状态", "COMM_STATE", "BOOLEAN", "", "00022", "R", 1.0, 30)
-        ));
-    }
-
     private void cleanupLegacyDemoPoints() {
         List<String> oldCodes = List.of(
                 "OUT_PRESSURE", "PUMP_FREQ", "SUPPLY_TEMP", "RETURN_TEMP", "PUMP_STATE",
@@ -345,16 +331,95 @@ public class DatabaseInitializer implements ApplicationRunner {
         }
     }
 
-    private void seedDevicePoints(String deviceCode, List<PointSeed> points) {
-        Long deviceId = deviceId(deviceCode);
-        for (PointSeed point : points) {
-            jdbcTemplate.update("""
-                    insert into scada_point(device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order)
-                    values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    on duplicate key update name = values(name), data_type = values(data_type), unit = values(unit), address = values(address),
-                        access_mode = values(access_mode), scale_value = values(scale_value), sort_order = values(sort_order)
-                    """, deviceId, point.name(), point.code(), point.dataType(), point.unit(), point.address(), point.accessMode(), point.scaleValue(), point.sortOrder());
+    private void cleanupLegacyDemoDevices() {
+        List<String> oldCodes = List.of("DEV-PUMP-001", "DEV-HEAT-002", "DEV-AIR-A", "DEV-WASTE-LIFT");
+        for (String code : oldCodes) {
+            Long id = jdbcTemplate.query("select id from scada_device where code = ?", rs -> rs.next() ? rs.getLong("id") : null, code);
+            if (id != null) {
+                jdbcTemplate.update("delete from scada_point where device_id = ?", id);
+                jdbcTemplate.update("delete from scada_device where id = ?", id);
+            }
         }
+    }
+
+    private void seedJindouhePointTable() {
+        InputStream input = getClass().getResourceAsStream("/jindouhe_points.csv");
+        if (input == null) {
+            return;
+        }
+        Map<String, JindouheAreaSeed> areas = new LinkedHashMap<>();
+        Map<String, JindouheDeviceSeed> devices = new LinkedHashMap<>();
+        List<JindouhePointSeed> points = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            String header = reader.readLine();
+            if (header == null) {
+                return;
+            }
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] values = line.split(",", -1);
+                if (values.length < 21) {
+                    continue;
+                }
+                JindouhePointSeed point = new JindouhePointSeed(
+                        values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+                        values[7], values[8], values[9], values[10], values[11], values[12], parseDouble(values[13]),
+                        parseInt(values[14]), values[15], values[16], values[17], values[18], values[19], values[20]
+                );
+                areas.putIfAbsent(point.areaCode(), new JindouheAreaSeed(point.areaName(), point.areaCode(), "来自金斗河现场自动化点表"));
+                devices.putIfAbsent(point.deviceCode(), new JindouheDeviceSeed(point.deviceName(), point.deviceCode(), point.deviceType(), point.areaCode(), point.sourceGroup()));
+                points.add(point);
+            }
+        } catch (Exception ex) {
+            throw new IllegalStateException("金斗河现场点表初始化失败", ex);
+        }
+        for (JindouheAreaSeed area : areas.values()) {
+            jdbcTemplate.update("""
+                    insert into scada_area(name, code, description)
+                    values (?, ?, ?)
+                    on duplicate key update name = values(name), description = values(description)
+                    """, area.name(), area.code(), area.description());
+        }
+        for (JindouheDeviceSeed device : devices.values()) {
+            jdbcTemplate.update("""
+                    insert into scada_device(area_id, name, code, type, status, protocol, ip_address, port, description)
+                    values (?, ?, ?, ?, '运行', 'MODBUS_TCP', '127.0.0.1', 1502, ?)
+                    on duplicate key update area_id = values(area_id), name = values(name), type = values(type), protocol = values(protocol),
+                        ip_address = values(ip_address), port = values(port), description = values(description)
+                    """, areaId(device.areaCode()), device.name(), device.code(), device.type(), "来源 LCU：" + device.sourceGroup());
+        }
+        for (JindouhePointSeed point : points) {
+            seedJindouhePoint(point);
+        }
+    }
+
+    private void seedJindouhePoint(JindouhePointSeed point) {
+        jdbcTemplate.update("""
+                insert into scada_point(device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order,
+                    source_group, source_sheet, io_module, io_type, modbus_type, sixnet_address, iconics_path, remark)
+                values ((select id from scada_device where code = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on duplicate key update name = values(name), data_type = values(data_type), unit = values(unit), address = values(address),
+                    access_mode = values(access_mode), scale_value = values(scale_value), sort_order = values(sort_order),
+                    source_group = values(source_group), source_sheet = values(source_sheet), io_module = values(io_module),
+                    io_type = values(io_type), modbus_type = values(modbus_type), sixnet_address = values(sixnet_address),
+                    iconics_path = values(iconics_path), remark = values(remark)
+                """, point.deviceCode(), point.pointName(), point.pointCode(), point.dataType(), point.unit(), point.address(), point.accessMode(),
+                point.scaleValue(), point.sortOrder(), point.sourceGroup(), point.sourceSheet(), point.ioModule(), point.ioType(), point.modbusType(),
+                point.sixnetAddress(), point.iconicsPath(), point.remark());
+    }
+
+    private double parseDouble(String value) {
+        if (value == null || value.isBlank()) {
+            return 1.0;
+        }
+        return Double.parseDouble(value);
+    }
+
+    private int parseInt(String value) {
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+        return Integer.parseInt(value);
     }
 
     private Long areaId(String code) {
@@ -374,9 +439,34 @@ public class DatabaseInitializer implements ApplicationRunner {
     private record AreaSeed(String name, String code, String description) {
     }
 
-    private record DeviceSeed(Long areaId, String name, String code, String type, String status, String protocol, String ipAddress, Integer port, String description) {
+
+    private record JindouheAreaSeed(String name, String code, String description) {
     }
 
-    private record PointSeed(String name, String code, String dataType, String unit, String address, String accessMode, Double scaleValue, Integer sortOrder) {
+    private record JindouheDeviceSeed(String name, String code, String type, String areaCode, String sourceGroup) {
+    }
+
+    private record JindouhePointSeed(
+            String sourceSheet,
+            String sourceGroup,
+            String areaCode,
+            String areaName,
+            String deviceCode,
+            String deviceName,
+            String deviceType,
+            String pointCode,
+            String pointName,
+            String dataType,
+            String unit,
+            String address,
+            String accessMode,
+            Double scaleValue,
+            Integer sortOrder,
+            String ioModule,
+            String ioType,
+            String modbusType,
+            String sixnetAddress,
+            String iconicsPath,
+            String remark) {
     }
 }

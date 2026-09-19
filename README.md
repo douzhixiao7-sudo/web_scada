@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、设备与点位台账、系统字典，以及实时监控静态页面框架。当前没有 PLC 仿真、真实采集、控制下发、报警闭环、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典，以及实时监控模拟数据页面。当前没有接入真实 PLC、控制下发、报警闭环、历史数据或组态业务。
 
 ## 本机位置
 
@@ -55,7 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 后端已提供设备管理基础接口：`/api/areas`、`/api/devices`、`/api/devices/{id}`、`/api/points?deviceId=...`。登录后可进行设备列表查询、区域/状态筛选、新建设备、编辑设备、删除设备，并查看设备点位。
 
-首次启动会自动创建 `scada_area`、`scada_device`、`scada_point`，并写入 4 个演示区域、4 台独立设备和基础点位。区域只表示设备归属位置；`1#进水闸门`、`2#进水闸门`、`1#加压泵`、`出口压力变送器` 这类可通信、可采集或可控制对象才是设备。当前仍是设备与点位台账 MVP，不连接真实 PLC，也不进行实时采集。
+首次启动会自动创建 `scada_area`、`scada_device`、`scada_point`，并读取 `backend/src/main/resources/jindouhe_points.csv` 初始化金斗河现场点表。当前点表来自“副本金斗河自动化测点、IP分配表240425.xlsx”，已转换为 2 个现场区域、10 个设备对象和 270 个点位。区域只表示设备归属位置；`1#主机`、`4#主机`、`1#闸门`、`1#2#闸门控制柜` 这类可通信、可采集或可控制对象才是设备。
 
 点位已支持按设备维护：查看、新增、编辑、删除、配置点位编码、采集地址、数据类型、单位、读写属性、缩放系数和排序。
 
@@ -83,5 +83,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、MQTT、Modbus、WebSocket 业务订阅、细粒度权限、报警、历史数据与 HMI 均未开发。下一阶段可进入实时数据模型与采集通道设计。
+TDengine、真实 Modbus 采集、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警、历史数据与 HMI 均未开发。下一阶段可进入采集通道模型、报警规则或历史数据设计。
 
