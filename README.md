@@ -45,6 +45,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 服务绑定本机回环地址：前端 `http://127.0.0.1:5173`，后端 `http://127.0.0.1:8080/actuator/health`，前端代理 `/api/actuator/health`。健康检查包含 `db` 和 `redis`；失败时不会伪造成功。
 
+
+## 认证与菜单
+
+后端已提供最小认证闭环：`/api/auth/login`、`/api/auth/me`、`/api/auth/logout` 和 `/api/menus`。登录成功后，后端会把 session token 写入 Redis，前端使用 `Authorization: Bearer <token>` 调用受保护接口。
+
+首次启动会自动创建基础后台表：`sys_user`、`sys_role`、`sys_menu`、`sys_user_role`、`sys_role_menu`、`sys_audit_log`。默认开发账号为 `admin` / `admin`，仅用于本机开发骨架，后续进入真实权限阶段时需要改成初始化密码或用户管理流程。
 ## 工程结构
 
 ```text
@@ -60,3 +66,4 @@ scripts/              工具安装、构建、启动、停止脚本
 ## 后续边界
 
 TDengine、MQTT、Modbus、WebSocket 业务订阅、认证授权与 HMI 均未开发。本次只验证服务能启动、数据库能连接以及源码可推送。
+

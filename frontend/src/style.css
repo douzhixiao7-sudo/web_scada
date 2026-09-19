@@ -123,6 +123,7 @@ nav { display: grid; gap: 6px; }
 .topbar { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 22px; }
 .top-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .health-pill { min-height: 32px; padding: 0 10px; }
+.user-chip { min-height: 32px; display: inline-flex; align-items: center; color: var(--text); background: rgba(65,199,185,.09); border: 1px solid rgba(65,199,185,.32); padding: 0 10px; }
 .content-grid { display: grid; gap: 16px; }
 .overview-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .metric-card { min-height: 132px; padding: 20px; display: grid; align-content: space-between; }
@@ -171,3 +172,4 @@ th { color: var(--muted); font-size: 12px; font-weight: 600; }
   .top-actions { justify-content: flex-start; }
   .alarm-list article { grid-template-columns: 1fr; }
 }
+

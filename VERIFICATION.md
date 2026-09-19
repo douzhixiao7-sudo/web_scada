@@ -11,6 +11,11 @@
 - Actuator 组件：`db: UP`，`redis: UP`。
 - 前端代理：`http://127.0.0.1:5173/api/actuator/health` 返回 UP。
 
+- 认证接口：`/api/auth/login` 使用 `admin/admin` 登录成功，返回 token 和 8 个后台菜单。
+- 会话接口：`/api/auth/me` 使用 Bearer token 返回当前用户 `admin`。
+- 菜单接口：`/api/menus` 使用 Bearer token 返回 8 个数据库菜单。
+- 退出接口：`/api/auth/logout` 可清理 Redis session。
+
 ## 当前范围
 
 项目只包含可运行框架和基础连接验证，没有 SCADA 业务功能、业务表、PLC 接入、报警、历史数据、权限或组态功能。
@@ -18,3 +23,4 @@
 ## 本地文件
 
 `.local/` 和 `.run/` 包含本机配置、密码、缓存、日志或进程记录，已被 Git 忽略，不提交到 GitHub。
+

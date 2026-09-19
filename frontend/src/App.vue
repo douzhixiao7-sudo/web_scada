@@ -6,16 +6,26 @@ type HealthPayload = {
   status?: string
   components?: Record<string, HealthComponent>
 }
-type MenuKey = 'overview' | 'devices' | 'monitor' | 'alarms' | 'history' | 'hmi' | 'users' | 'settings'
-
 type MenuItem = {
-  key: MenuKey
+  key: string
   label: string
   helper: string
   icon: string
+  sortOrder?: number
 }
+type AuthUser = {
+  id: number
+  username: string
+  displayName: string
+}
+type AuthPayload = {
+  token?: string
+  user: AuthUser
+  menus: MenuItem[]
+}
+type ApiError = { message?: string }
 
-const menuItems: MenuItem[] = [
+const fallbackMenus: MenuItem[] = [
   { key: 'overview', label: '首页总览', helper: '运行态势', icon: '⌁' },
   { key: 'devices', label: '设备管理', helper: '站点与控制柜', icon: '▦' },
   { key: 'monitor', label: '实时监控', helper: '采集点位', icon: '◌' },
@@ -26,19 +36,24 @@ const menuItems: MenuItem[] = [
   { key: 'settings', label: '系统设置', helper: '运行参数', icon: '⚙' },
 ]
 
+const tokenKey = 'web_scada_token'
 const username = ref('admin')
 const password = ref('')
 const loginError = ref('')
 const isAuthed = ref(false)
-const activeMenu = ref<MenuKey>('overview')
+const user = ref<AuthUser | null>(null)
+const menuItems = ref<MenuItem[]>(fallbackMenus)
+const activeMenu = ref('overview')
 const health = ref<HealthPayload | null>(null)
 const healthText = ref('正在连接')
 const checking = ref(false)
+const loggingIn = ref(false)
 
-const activeItem = computed(() => menuItems.find((item) => item.key === activeMenu.value) ?? menuItems[0])
+const activeItem = computed(() => menuItems.value.find((item) => item.key === activeMenu.value) ?? menuItems.value[0] ?? fallbackMenus[0])
 const dbStatus = computed(() => health.value?.components?.db?.status ?? 'UNKNOWN')
 const redisStatus = computed(() => health.value?.components?.redis?.status ?? 'UNKNOWN')
 const overallStatus = computed(() => health.value?.status ?? 'UNKNOWN')
+const displayName = computed(() => user.value?.displayName ?? '未登录')
 
 const deviceRows = [
   { name: '一号加压泵站', area: '供水一区', status: '运行', load: '72%', signal: '2.4 s' },
@@ -54,6 +69,20 @@ const alarmRows = [
 ]
 
 const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
+
+function authHeaders(): Record<string, string> {
+  const token = localStorage.getItem(tokenKey)
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function parseError(response: Response) {
+  try {
+    const body = (await response.json()) as ApiError
+    return body.message || `HTTP ${response.status}`
+  } catch {
+    return `HTTP ${response.status}`
+  }
+}
 
 async function checkBackend() {
   checking.value = true
@@ -75,22 +104,69 @@ async function checkBackend() {
   }
 }
 
-function submitLogin() {
-  if (!username.value.trim()) {
-    loginError.value = '请输入账号'
+async function loadCurrentUser() {
+  const token = localStorage.getItem(tokenKey)
+  if (!token) return
+  try {
+    const response = await fetch('/api/auth/me', { headers: authHeaders(), cache: 'no-store' })
+    if (!response.ok) throw new Error(await parseError(response))
+    const result = (await response.json()) as AuthPayload
+    user.value = result.user
+    menuItems.value = result.menus.length ? result.menus : fallbackMenus
+    isAuthed.value = true
+  } catch {
+    localStorage.removeItem(tokenKey)
+    user.value = null
+    isAuthed.value = false
+  }
+}
+
+async function submitLogin() {
+  loginError.value = ''
+  const account = username.value.trim()
+  if (!account || !password.value) {
+    loginError.value = '请输入账号和密码'
     return
   }
-  loginError.value = ''
-  isAuthed.value = true
-  void checkBackend()
+  loggingIn.value = true
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: account, password: password.value }),
+    })
+    if (!response.ok) throw new Error(await parseError(response))
+    const result = (await response.json()) as AuthPayload
+    if (!result.token) throw new Error('登录响应缺少 token')
+    localStorage.setItem(tokenKey, result.token)
+    user.value = result.user
+    menuItems.value = result.menus.length ? result.menus : fallbackMenus
+    activeMenu.value = menuItems.value[0]?.key ?? 'overview'
+    isAuthed.value = true
+    password.value = ''
+    await checkBackend()
+  } catch (error) {
+    loginError.value = error instanceof Error ? error.message : '登录失败'
+  } finally {
+    loggingIn.value = false
+  }
 }
 
-function logout() {
-  isAuthed.value = false
-  activeMenu.value = 'overview'
+async function logout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() })
+  } finally {
+    localStorage.removeItem(tokenKey)
+    user.value = null
+    isAuthed.value = false
+    activeMenu.value = 'overview'
+  }
 }
 
-onMounted(checkBackend)
+onMounted(async () => {
+  await checkBackend()
+  await loadCurrentUser()
+})
 </script>
 
 <template>
@@ -113,10 +189,10 @@ onMounted(checkBackend)
         </label>
         <label>
           <span>密码</span>
-          <input v-model="password" type="password" autocomplete="current-password" placeholder="本阶段演示登录" />
+          <input v-model="password" type="password" autocomplete="current-password" placeholder="默认 admin" />
         </label>
         <p v-if="loginError" class="form-error">{{ loginError }}</p>
-        <button type="submit">进入后台</button>
+        <button type="submit" :disabled="loggingIn">{{ loggingIn ? '登录中' : '进入后台' }}</button>
         <button class="ghost" type="button" :disabled="checking" @click="checkBackend">
           {{ checking ? '检查中' : '检查连接' }}
         </button>
@@ -130,7 +206,7 @@ onMounted(checkBackend)
         <span class="mark-grid"></span>
         <div>
           <strong>Web SCADA</strong>
-          <small>工业管理后台</small>
+          <small>{{ displayName }}</small>
         </div>
       </div>
       <nav>
@@ -157,6 +233,7 @@ onMounted(checkBackend)
           <h2>{{ activeItem.label }}</h2>
         </div>
         <div class="top-actions">
+          <span class="user-chip">{{ displayName }}</span>
           <span class="health-pill"><span class="status-dot is-ok"></span> MySQL {{ dbStatus }}</span>
           <span class="health-pill"><span class="status-dot is-ok"></span> Redis {{ redisStatus }}</span>
           <button class="ghost compact" type="button" :disabled="checking" @click="checkBackend">刷新</button>
@@ -247,8 +324,9 @@ onMounted(checkBackend)
       <section v-else class="empty-state">
         <p class="eyebrow">{{ activeItem.label }}</p>
         <h3>{{ activeItem.label }}页面骨架已预留</h3>
-        <p>当前阶段只搭建后台信息架构和视觉基底，后续可继续接入真实业务接口、权限与数据模型。</p>
+        <p>当前阶段已接入后端登录、Redis 会话和数据库菜单，后续可继续扩展真实业务接口、权限与数据模型。</p>
       </section>
     </section>
   </main>
 </template>
+
