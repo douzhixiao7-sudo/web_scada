@@ -215,6 +215,7 @@ public class DatabaseInitializer implements ApplicationRunner {
         seedDictionaryType("point_data_type", "点位数据类型", "采集点位值类型", 40);
         seedDictionaryType("point_access_mode", "点位读写属性", "采集点位读写能力", 50);
         seedDictionaryType("point_unit", "点位单位", "常用工程单位", 60);
+        seedDictionaryType("modbus_area", "Modbus 数据区", "0/1/3/4 区语义", 70);
 
         seedDictionaryItems("device_status", List.of(
                 new DictItemSeed("运行", "运行", "设备处于运行态", 10),
@@ -255,6 +256,12 @@ public class DatabaseInitializer implements ApplicationRunner {
                 new DictItemSeed("m", "m", "长度或液位", 50),
                 new DictItemSeed("C", "℃", "温度", 60),
                 new DictItemSeed("", "无单位", "无工程单位", 70)
+        ));
+        seedDictionaryItems("modbus_area", List.of(
+                new DictItemSeed("0", "0区 Coil", "线圈，可读写，常用于控制输出 DO", 10),
+                new DictItemSeed("1", "1区 Discrete Input", "离散输入，只读，常用于状态输入 DI", 20),
+                new DictItemSeed("3", "3区 Input Register", "输入寄存器，只读，常用于 AI/测量值", 30),
+                new DictItemSeed("4", "4区 Holding Register", "保持寄存器，可读写，常用于 AO/设定值", 40)
         ));
     }
 

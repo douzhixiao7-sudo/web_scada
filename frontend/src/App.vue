@@ -44,6 +44,7 @@ type Point = {
   remark: string
 }
 type RealtimeValue = { pointId: number; deviceId: number; pointCode: string; value: string; quality: string; collectedAt: string }
+type AlarmEvent = { id: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; level: string; message: string; value: string; quality: string; occurredAt: string }
 
 type DeviceForm = {
   areaId: number | null
@@ -95,6 +96,8 @@ const dictionaries = ref<Record<string, DictItem[]>>({})
 const devices = ref<Device[]>([])
 const points = ref<Point[]>([])
 const realtimeValues = ref<Record<number, RealtimeValue>>({})
+const alarmRows = ref<AlarmEvent[]>([])
+const alarmLoading = ref(false)
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -127,11 +130,6 @@ const monitorSelectedDevice = computed(() => devices.value.find((device) => devi
 const monitorPointCount = computed(() => points.value.length)
 const writablePointCount = computed(() => points.value.filter((point) => point.accessMode !== 'R').length)
 
-const alarmRows = [
-  { level: '高', source: '出口压力变送器', message: '压力超过高限', time: '19:08:12' },
-  { level: '中', source: '1#加压泵', message: '电机电流波动', time: '19:02:44' },
-  { level: '低', source: '2#进水闸门', message: '远程允许待确认', time: '18:55:21' },
-]
 const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
 
 function emptyDeviceForm(): DeviceForm {
@@ -202,6 +200,7 @@ async function loadCurrentUser() {
     menuItems.value = result.menus.length ? result.menus : fallbackMenus
     isAuthed.value = true
     await loadDeviceData()
+    await loadAlarms()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -239,6 +238,7 @@ async function submitLogin() {
     await checkBackend()
     await loadDictionaries()
     await loadDeviceData()
+    await loadAlarms()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -259,6 +259,15 @@ async function logout() {
 
 async function refreshMonitorPoints() {
   if (monitorSelectedDevice.value) await selectDevice(monitorSelectedDevice.value)
+}
+
+async function loadAlarms() {
+  alarmLoading.value = true
+  try {
+    alarmRows.value = await apiFetch<AlarmEvent[]>('/api/alarms/active')
+  } finally {
+    alarmLoading.value = false
+  }
 }
 
 async function changeMonitorArea() {
@@ -573,11 +582,9 @@ onMounted(async () => {
         </aside>
       </section>
 
-      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>待确认 3 条</span></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.time"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }}</strong><small>{{ alarm.source }} · {{ alarm.time }}</small></div><button class="ghost compact" type="button">确认</button></article></div></section>
+      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `活动报警 ${alarmRows.length} 条` }}</span></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · {{ new Date(alarm.occurredAt).toLocaleTimeString() }}</small></div><button class="ghost compact" type="button" disabled>MVP预留</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前没有活动报警。</p></div></section>
 
       <section v-else class="empty-state"><p class="eyebrow">{{ activeItem.label }}</p><h3>{{ activeItem.label }}页面骨架已预留</h3><p>当前阶段已接入设备、区域和点位数据模型，后续可继续扩展实时采集、报警规则和历史数据。</p></section>
     </section>
   </main>
 </template>
-
-
