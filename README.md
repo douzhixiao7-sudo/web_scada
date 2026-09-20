@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、实时监控模拟数据页面、报警闭环、报警规则维护 MVP 和采集通道配置 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Redis 实时当前值、实时监控页面、报警闭环和报警规则维护 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
 
 ## 本机位置
 
@@ -70,12 +70,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 本阶段没有新增 PLC 仿真、采集调度、实时数据表或 WebSocket 推送；这些会在后续实时数据阶段单独设计和实现。
 
 
+## Redis 实时数据 MVP
+
+后端已提供内置仿真采集器。项目启动后，定时任务每秒读取启用的 `scada_collect_channel` 和 `scada_collect_binding`，按点位类型生成仿真实时值，并写入 Redis Hash `scada:realtime:values`。实时接口 `/api/realtime/values?deviceId=...` 从 Redis 当前值读取；报警规则计算也复用同一份 Redis 当前值。
+
+前端实时监控页已改为展示 Redis 当前值，并在页面停留时每 3 秒自动刷新。当前阶段仍不连接真实 PLC，不写历史库；下一步可把内置仿真采集器替换为 Modbus TCP 仿真 PLC 或真实 Modbus 采集器。
+
 ## 报警闭环 MVP
 
 后端已提供报警闭环 MVP：`/api/alarms/active` 会按实时模拟值计算活动报警并同步写入 `scada_alarm_event`；`/api/alarms/events?status=...` 支持按状态查询；`POST /api/alarms/events/{id}/ack` 支持确认和备注；`/api/alarms/rules` 支持按设备、点位和启用状态查询报警规则；`PUT /api/alarms/rules/{id}` 支持维护规则名称、阈值、等级、内容和启停状态。首次启动会自动创建 `scada_alarm_rule`，并按现场点表生成质量异常、数据超时、故障信号、开度、电流、电压等默认规则。前端“报警中心”已支持状态筛选、确认备注和规则维护。
 
 当前报警规则维护仍是 MVP：支持查询、编辑和启停已有默认规则；新增规则、删除规则、恢复策略配置、历史高级筛选和报表尚未开发。
-
 
 ## 采集通道配置 MVP
 
@@ -101,5 +106,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 Modbus 采集线程、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入 Modbus 仿真数据源、采集调度服务或历史数据设计。
+TDengine、真实 Modbus 采集线程、独立 Modbus TCP 仿真 PLC、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入独立 Modbus TCP 仿真 PLC、真实 Modbus 采集器或历史数据设计。
 

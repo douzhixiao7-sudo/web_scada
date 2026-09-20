@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 type HealthComponent = { status?: string }
 type HealthPayload = { status?: string; components?: Record<string, HealthComponent> }
@@ -109,6 +109,7 @@ const collectChannels = ref<CollectChannel[]>([])
 const collectBindings = ref<CollectBinding[]>([])
 const collectChannelLoading = ref(false)
 const selectedCollectChannelId = ref<number | null>(null)
+let monitorRefreshTimer: ReturnType<typeof setInterval> | null = null
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -275,7 +276,14 @@ async function logout() {
 }
 
 async function refreshMonitorPoints() {
-  if (monitorSelectedDevice.value) await selectDevice(monitorSelectedDevice.value)
+  if (!monitorSelectedDevice.value) return
+  const device = monitorSelectedDevice.value
+  if (selectedDevice.value?.id === device.id && points.value.length) {
+    const valueRows = await apiFetch<RealtimeValue[]>(`/api/realtime/values?deviceId=${device.id}`)
+    realtimeValues.value = Object.fromEntries(valueRows.map((value) => [value.pointId, value]))
+    return
+  }
+  await selectDevice(device)
 }
 
 async function loadAlarms() {
@@ -554,6 +562,13 @@ async function deletePoint(point: Point) {
 onMounted(async () => {
   await checkBackend()
   await loadCurrentUser()
+  monitorRefreshTimer = setInterval(() => {
+    if (isAuthed.value && activeMenu.value === 'monitor') refreshMonitorPoints()
+  }, 3000)
+})
+
+onUnmounted(() => {
+  if (monitorRefreshTimer) clearInterval(monitorRefreshTimer)
 })
 </script>
 
@@ -680,7 +695,7 @@ onMounted(async () => {
 
       <section v-else-if="activeMenu === 'monitor'" class="monitor-layout">
         <section class="panel page-panel">
-          <div class="panel-head"><h3>实时监控框架</h3><span>基于设备/点位台账 · 暂未接入实时值</span></div>
+          <div class="panel-head"><h3>实时监控框架</h3><span>Redis 当前值 · 3 秒自动刷新</span></div>
           <div class="toolbar monitor-toolbar">
             <label><span>区域</span><select v-model="monitorAreaFilter" @change="changeMonitorArea"><option value="">全部区域</option><option v-for="area in areas" :key="area.id" :value="String(area.id)">{{ area.name }}</option></select></label>
             <label><span>设备</span><select v-model.number="monitorDeviceId" @change="refreshMonitorPoints"><option v-for="device in monitorDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
@@ -713,7 +728,7 @@ onMounted(async () => {
         <aside class="panel monitor-side">
           <div class="panel-head"><h3>实时值接口契约</h3><span>MVP 预留</span></div>
           <dl class="status-list contract-list"><dt>pointId</dt><dd>点位 ID</dd><dt>value</dt><dd>当前值</dd><dt>quality</dt><dd>GOOD / BAD / STALE</dd><dt>collectedAt</dt><dd>采集时间</dd></dl>
-          <p class="muted">当前阶段按金斗河现场点表生成开发期模拟值，不接真实 PLC，不写实时值表。</p>
+          <p class="muted">当前阶段由后端内置仿真采集器按通道点位绑定生成实时值，写入 Redis 当前值缓存；暂不连接真实 PLC，不写历史库。</p>
         </aside>
       </section>
 

@@ -20,4 +20,10 @@ public class RealtimeController {
     public List<RealtimeValueResponse> listValues(@RequestParam Long deviceId) {
         return realtimeService.listValues(deviceId);
     }
+
+    @GetMapping("/cache-size")
+    public long cacheSize() {
+        return realtimeService.cachedValueCount();
+    }
 }
+
