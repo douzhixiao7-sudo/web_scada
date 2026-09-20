@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Redis 实时当前值、实时监控页面、报警闭环和报警规则维护 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、实时监控页面、报警闭环和报警规则维护 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
 
 ## 本机位置
 
@@ -70,11 +70,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 本阶段没有新增 PLC 仿真、采集调度、实时数据表或 WebSocket 推送；这些会在后续实时数据阶段单独设计和实现。
 
 
+
+## Modbus TCP 仿真 PLC MVP
+
+后端已内置一个轻量 Modbus TCP 仿真 PLC，项目启动后监听 `127.0.0.1:1502`，支持 0 区 Coil、1 区 Discrete Input、3 区 Input Register、4 区 Holding Register 的基础读取。采集调度器会优先通过 Java Modbus TCP 客户端读取仿真 PLC，再把采集结果写入 Redis 当前值；如果读取失败，会回退到内置仿真算法，避免实时监控页面断数。
+
+当前阶段已经形成 `Modbus TCP 仿真 PLC -> Java Modbus 采集 -> Redis 当前值 -> 实时监控 / 报警` 的主链路。这个仿真 PLC 是本机开发期能力，后续接真实设备时可复用采集器和 Redis 后续链路。
+
 ## Redis 实时数据 MVP
 
-后端已提供内置仿真采集器。项目启动后，定时任务每秒读取启用的 `scada_collect_channel` 和 `scada_collect_binding`，按点位类型生成仿真实时值，并写入 Redis Hash `scada:realtime:values`。实时接口 `/api/realtime/values?deviceId=...` 从 Redis 当前值读取；报警规则计算也复用同一份 Redis 当前值。
+后端已提供 Modbus 采集调度器。项目启动后，定时任务每秒读取启用的 `scada_collect_channel` 和 `scada_collect_binding`，优先通过 Modbus TCP 客户端读取本机仿真 PLC，并写入 Redis Hash `scada:realtime:values`。实时接口 `/api/realtime/values?deviceId=...` 从 Redis 当前值读取；报警规则计算也复用同一份 Redis 当前值。
 
-前端实时监控页已改为展示 Redis 当前值，并在页面停留时每 3 秒自动刷新。当前阶段仍不连接真实 PLC，不写历史库；下一步可把内置仿真采集器替换为 Modbus TCP 仿真 PLC 或真实 Modbus 采集器。
+前端实时监控页已改为展示 Redis 当前值，并在页面停留时每 3 秒自动刷新。当前阶段仍不连接真实 PLC，不写历史库；下一步可把本机仿真 PLC 切换为真实 Modbus 设备。
 
 ## 报警闭环 MVP
 
@@ -106,5 +113,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 Modbus 采集线程、独立 Modbus TCP 仿真 PLC、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入独立 Modbus TCP 仿真 PLC、真实 Modbus 采集器或历史数据设计。
+TDengine、真实 PLC 接入、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入真实 Modbus 设备配置、控制下发 MVP 或历史数据设计。
 
