@@ -3,7 +3,8 @@ package com.example.scada.alarm;
 import java.time.Instant;
 
 public record AlarmEventResponse(
-        String id,
+        Long id,
+        String alarmKey,
         Long deviceId,
         String deviceName,
         Long pointId,
@@ -13,5 +14,11 @@ public record AlarmEventResponse(
         String message,
         String value,
         String quality,
-        Instant occurredAt) {
+        String status,
+        Instant occurredAt,
+        Instant lastSeenAt,
+        Instant recoveredAt,
+        Instant acknowledgedAt,
+        String acknowledgedBy,
+        String ackNote) {
 }

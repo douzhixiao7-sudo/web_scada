@@ -44,7 +44,7 @@ type Point = {
   remark: string
 }
 type RealtimeValue = { pointId: number; deviceId: number; pointCode: string; value: string; quality: string; collectedAt: string }
-type AlarmEvent = { id: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; level: string; message: string; value: string; quality: string; occurredAt: string }
+type AlarmEvent = { id: number; alarmKey: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; level: string; message: string; value: string; quality: string; status: string; occurredAt: string; lastSeenAt: string; recoveredAt?: string | null; acknowledgedAt?: string | null; acknowledgedBy: string; ackNote: string }
 
 type DeviceForm = {
   areaId: number | null
@@ -98,6 +98,7 @@ const points = ref<Point[]>([])
 const realtimeValues = ref<Record<number, RealtimeValue>>({})
 const alarmRows = ref<AlarmEvent[]>([])
 const alarmLoading = ref(false)
+const alarmStatusFilter = ref('ACTIVE')
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -264,10 +265,30 @@ async function refreshMonitorPoints() {
 async function loadAlarms() {
   alarmLoading.value = true
   try {
-    alarmRows.value = await apiFetch<AlarmEvent[]>('/api/alarms/active')
+    if (alarmStatusFilter.value === 'ACTIVE') {
+      alarmRows.value = await apiFetch<AlarmEvent[]>('/api/alarms/active')
+    } else {
+      alarmRows.value = await apiFetch<AlarmEvent[]>(`/api/alarms/events?status=${alarmStatusFilter.value}`)
+    }
   } finally {
     alarmLoading.value = false
   }
+}
+
+async function acknowledgeAlarm(alarm: AlarmEvent) {
+  const note = window.prompt(`确认报警：${alarm.deviceName} ${alarm.pointName}`, '')
+  if (note === null) return
+  await apiFetch<AlarmEvent>(`/api/alarms/events/${alarm.id}/ack`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  })
+  await loadAlarms()
+}
+
+function alarmStatusText(status: string) {
+  const labels: Record<string, string> = { ACTIVE: '活动中', ACKED: '已确认', RECOVERED: '已恢复' }
+  return labels[status] ?? status
 }
 
 async function changeMonitorArea() {
@@ -582,7 +603,7 @@ onMounted(async () => {
         </aside>
       </section>
 
-      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `活动报警 ${alarmRows.length} 条` }}</span></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · {{ new Date(alarm.occurredAt).toLocaleTimeString() }}</small></div><button class="ghost compact" type="button" disabled>MVP预留</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前没有活动报警。</p></div></section>
+      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section>
 
       <section v-else class="empty-state"><p class="eyebrow">{{ activeItem.label }}</p><h3>{{ activeItem.label }}页面骨架已预留</h3><p>当前阶段已接入设备、区域和点位数据模型，后续可继续扩展实时采集、报警规则和历史数据。</p></section>
     </section>

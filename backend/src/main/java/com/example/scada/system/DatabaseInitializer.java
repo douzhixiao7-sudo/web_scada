@@ -163,6 +163,33 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_point_device(device_id)
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_alarm_event (
+                    id bigint primary key auto_increment,
+                    alarm_key varchar(128) not null unique,
+                    device_id bigint not null,
+                    device_name varchar(128) not null,
+                    point_id bigint not null,
+                    point_code varchar(64) not null,
+                    point_name varchar(128) not null,
+                    level varchar(16) not null,
+                    message varchar(128) not null,
+                    value varchar(64) not null,
+                    quality varchar(32) not null,
+                    status varchar(32) not null,
+                    occurred_at timestamp not null,
+                    last_seen_at timestamp not null,
+                    recovered_at timestamp null,
+                    acknowledged_at timestamp null,
+                    acknowledged_by varchar(64) not null default '',
+                    ack_note varchar(255) not null default '',
+                    created_at timestamp not null default current_timestamp,
+                    updated_at timestamp not null default current_timestamp on update current_timestamp,
+                    index idx_scada_alarm_status(status),
+                    index idx_scada_alarm_device(device_id),
+                    index idx_scada_alarm_point(point_id)
+                )
+                """);
         addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
         addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");
@@ -477,3 +504,4 @@ public class DatabaseInitializer implements ApplicationRunner {
             String remark) {
     }
 }
+

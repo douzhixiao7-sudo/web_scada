@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典，以及实时监控模拟数据页面。当前没有接入真实 PLC、控制下发、报警闭环、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、实时监控模拟数据页面，以及报警闭环 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
 
 ## 本机位置
 
@@ -70,15 +70,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 本阶段没有新增 PLC 仿真、采集调度、实时数据表或 WebSocket 推送；这些会在后续实时数据阶段单独设计和实现。
 
 
-## 报警规则 MVP
+## 报警闭环 MVP
 
-后端已提供 `/api/alarms/active` 活动报警接口，当前按实时模拟值即时计算报警，不落报警事件表。规则包含质量异常、数据超时、故障信号触发，以及部分数值越限。前端“报警中心”已从静态演示改为接口驱动，展示报警等级、设备、点位、当前值和发生时间。
+后端已提供报警闭环 MVP：`/api/alarms/active` 会按实时模拟值计算活动报警并同步写入 `scada_alarm_event`；`/api/alarms/events?status=...` 支持按状态查询；`POST /api/alarms/events/{id}/ack` 支持确认和备注。规则包含质量异常、数据超时、故障信号触发，以及部分数值越限。前端“报警中心”已支持状态筛选、确认和备注。
 
-当前报警用于 MVP 联调和业务验证；确认、恢复、报警历史和规则维护页面尚未开发。
+当前报警闭环仍是 MVP：规则维护页面、恢复策略配置、历史高级筛选和报表尚未开发。
 
 ## Modbus 数据区语义
 
 系统字典已维护 `modbus_area`：`0` 表示 Coil 线圈区，可读写，常用于 DO 控制输出；`1` 表示 Discrete Input 离散输入区，只读，常用于 DI 状态输入；`3` 表示 Input Register 输入寄存器区，只读，常用于 AI/测量值；`4` 表示 Holding Register 保持寄存器区，可读写，常用于 AO/设定值。
+
 ## 工程结构
 
 ```text
@@ -93,5 +94,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 Modbus 采集、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警、历史数据与 HMI 均未开发。下一阶段可进入采集通道模型、报警规则或历史数据设计。
+TDengine、真实 Modbus 采集、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警规则维护、历史数据与 HMI 均未开发。下一阶段可进入报警规则维护、采集通道模型或历史数据设计。
 
