@@ -300,3 +300,16 @@ tr.selected { background: rgba(65,199,185,.07); }
   color: var(--muted);
   margin-top: 4px;
 }
+
+.collector-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, .7fr);
+  gap: 16px;
+}
+.collector-bindings article {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+@media (max-width: 980px) {
+  .collector-page { grid-template-columns: 1fr; }
+}
+

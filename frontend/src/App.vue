@@ -46,6 +46,8 @@ type Point = {
 type RealtimeValue = { pointId: number; deviceId: number; pointCode: string; value: string; quality: string; collectedAt: string }
 type AlarmEvent = { id: number; alarmKey: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; level: string; message: string; value: string; quality: string; status: string; occurredAt: string; lastSeenAt: string; recoveredAt?: string | null; acknowledgedAt?: string | null; acknowledgedBy: string; ackNote: string }
 type AlarmRule = { id: number; pointId: number; pointCode: string; pointName: string; ruleName: string; ruleType: string; operator: string; thresholdValue: number | null; level: string; message: string; enabled: boolean }
+type CollectChannel = { id: number; deviceId: number; deviceName: string; deviceCode: string; name: string; code: string; protocol: string; host: string; port: number | null; pollIntervalMs: number; enabled: boolean; status: string; pointCount: number; lastPolledAt: string | null }
+type CollectBinding = { id: number; channelId: number; pointId: number; pointCode: string; pointName: string; address: string; modbusType: string; accessMode: string; enabled: boolean }
 
 type DeviceForm = {
   areaId: number | null
@@ -103,6 +105,10 @@ const alarmStatusFilter = ref('ACTIVE')
 const alarmRules = ref<AlarmRule[]>([])
 const alarmRuleDeviceId = ref<number | null>(null)
 const alarmRuleLoading = ref(false)
+const collectChannels = ref<CollectChannel[]>([])
+const collectBindings = ref<CollectBinding[]>([])
+const collectChannelLoading = ref(false)
+const selectedCollectChannelId = ref<number | null>(null)
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -134,6 +140,8 @@ const monitorDevices = computed(() => devices.value.filter((device) => !monitorA
 const monitorSelectedDevice = computed(() => devices.value.find((device) => device.id === monitorDeviceId.value) ?? monitorDevices.value[0] ?? null)
 const monitorPointCount = computed(() => points.value.length)
 const writablePointCount = computed(() => points.value.filter((point) => point.accessMode !== 'R').length)
+const selectedCollectChannel = computed(() => collectChannels.value.find((channel) => channel.id === selectedCollectChannelId.value) ?? collectChannels.value[0] ?? null)
+const enabledCollectChannelCount = computed(() => collectChannels.value.filter((channel) => channel.enabled).length)
 
 const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
 
@@ -207,6 +215,7 @@ async function loadCurrentUser() {
     await loadDeviceData()
     await loadAlarms()
     await loadAlarmRules()
+    await loadCollectChannels()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -246,6 +255,7 @@ async function submitLogin() {
     await loadDeviceData()
     await loadAlarms()
     await loadAlarmRules()
+    await loadCollectChannels()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -323,6 +333,71 @@ async function editAlarmRule(rule: AlarmRule) {
   })
   await loadAlarmRules()
   await loadAlarms()
+}
+
+
+async function loadCollectChannels() {
+  collectChannelLoading.value = true
+  try {
+    collectChannels.value = await apiFetch<CollectChannel[]>('/api/collect/channels')
+    if (!selectedCollectChannelId.value && collectChannels.value.length) selectedCollectChannelId.value = collectChannels.value[0].id
+    await loadCollectBindings()
+  } finally {
+    collectChannelLoading.value = false
+  }
+}
+
+async function loadCollectBindings() {
+  if (!selectedCollectChannel.value) {
+    collectBindings.value = []
+    return
+  }
+  collectBindings.value = await apiFetch<CollectBinding[]>(`/api/collect/channels/${selectedCollectChannel.value.id}/bindings`)
+}
+
+async function changeCollectChannel() {
+  await loadCollectBindings()
+}
+
+async function editCollectChannel(channel: CollectChannel) {
+  const host = window.prompt('采集主机/IP', channel.host)
+  if (host === null) return
+  const portInput = window.prompt('端口，可留空', channel.port == null ? '' : String(channel.port))
+  if (portInput === null) return
+  const intervalInput = window.prompt('采集周期，单位毫秒', String(channel.pollIntervalMs))
+  if (intervalInput === null) return
+  const enabledInput = window.prompt('是否启用：1 启用，0 停用', channel.enabled ? '1' : '0')
+  if (enabledInput === null) return
+  await apiFetch<CollectChannel>(`/api/collect/channels/${channel.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: channel.name,
+      protocol: channel.protocol,
+      host,
+      port: portInput.trim() ? Number(portInput) : null,
+      pollIntervalMs: intervalInput.trim() ? Number(intervalInput) : channel.pollIntervalMs,
+      enabled: enabledInput.trim() !== '0',
+      status: channel.status,
+    }),
+  })
+  await loadCollectChannels()
+}
+
+async function markCollectPolled(channel: CollectChannel) {
+  await apiFetch<CollectChannel>(`/api/collect/channels/${channel.id}/poll`, { method: 'POST' })
+  await loadCollectChannels()
+}
+
+async function toggleCollectBinding(binding: CollectBinding) {
+  if (!selectedCollectChannel.value) return
+  await apiFetch<CollectBinding>(`/api/collect/channels/${selectedCollectChannel.value.id}/bindings/${binding.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: !binding.enabled }),
+  })
+  await loadCollectBindings()
+  await loadCollectChannels()
 }
 
 function alarmStatusText(status: string) {
@@ -643,6 +718,45 @@ onMounted(async () => {
       </section>
 
       <section v-else-if="activeMenu === 'alarms'" class="alarm-page"><section class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section><section class="panel page-panel"><div class="panel-head"><h3>报警规则维护</h3><span>{{ alarmRuleLoading ? '加载中' : `规则 ${alarmRules.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>设备</span><select v-model.number="alarmRuleDeviceId" @change="loadAlarmRules"><option :value="null">全部设备</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label><button class="ghost compact" type="button" @click="loadAlarmRules">刷新规则</button></div><div class="table-wrap"><table><thead><tr><th>点位</th><th>规则</th><th>类型</th><th>阈值</th><th>等级</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="rule in alarmRules" :key="rule.id"><td>{{ rule.pointName }}<small>{{ rule.pointCode }}</small></td><td>{{ rule.ruleName }}<small>{{ rule.message }}</small></td><td>{{ rule.ruleType }}</td><td>{{ rule.thresholdValue ?? '-' }}</td><td>{{ rule.level }}</td><td><span :class="['tag', rule.enabled ? 'ok' : 'idle']">{{ rule.enabled ? '启用' : '停用' }}</span></td><td><button class="ghost compact" type="button" @click="editAlarmRule(rule)">编辑</button></td></tr></tbody></table></div></section></section>
+
+
+      <section v-else-if="activeMenu === 'settings'" class="collector-page">
+        <section class="panel page-panel">
+          <div class="panel-head"><h3>采集通道配置</h3><span>{{ collectChannelLoading ? '加载中' : `启用 ${enabledCollectChannelCount}/${collectChannels.length}` }}</span></div>
+          <div class="toolbar alarm-toolbar">
+            <label><span>通道</span><select v-model.number="selectedCollectChannelId" @change="changeCollectChannel"><option v-for="channel in collectChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select></label>
+            <button class="ghost compact" type="button" @click="loadCollectChannels">刷新通道</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>设备</th><th>协议</th><th>地址</th><th>周期</th><th>点位</th><th>状态</th><th>最后采集</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr v-for="channel in collectChannels" :key="channel.id" :class="{ selected: selectedCollectChannelId === channel.id }">
+                  <td><button class="link-button" type="button" @click="selectedCollectChannelId = channel.id; changeCollectChannel()">{{ channel.name }}<small>{{ channel.deviceName }} · {{ channel.code }}</small></button></td>
+                  <td>{{ channel.protocol }}</td>
+                  <td>{{ channel.host }}{{ channel.port ? `:${channel.port}` : '' }}</td>
+                  <td>{{ channel.pollIntervalMs }} ms</td>
+                  <td>{{ channel.pointCount }}</td>
+                  <td><span :class="['tag', channel.enabled ? 'ok' : 'idle']">{{ channel.enabled ? channel.status : '停用' }}</span></td>
+                  <td>{{ channel.lastPolledAt ? new Date(channel.lastPolledAt).toLocaleTimeString() : '未采集' }}</td>
+                  <td class="row-actions"><button class="ghost compact" type="button" @click="editCollectChannel(channel)">编辑</button><button class="ghost compact" type="button" @click="markCollectPolled(channel)">模拟心跳</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <aside class="panel side-panel">
+          <div class="panel-head"><h3>通道点位绑定</h3><span>{{ selectedCollectChannel?.name ?? '未选择' }}</span></div>
+          <p class="muted">当前阶段只维护采集配置和点位绑定，不启动真实 PLC 采集线程。</p>
+          <div class="point-list collector-bindings">
+            <article v-for="binding in collectBindings" :key="binding.id">
+              <div><strong>{{ binding.pointName }}</strong><small>{{ binding.pointCode }} · {{ binding.modbusType || '未知区' }} · {{ binding.address || '-' }}</small></div>
+              <button class="ghost compact" type="button" @click="toggleCollectBinding(binding)">{{ binding.enabled ? '停用' : '启用' }}</button>
+            </article>
+            <p v-if="!collectBindings.length" class="muted">选择采集通道后查看点位绑定。</p>
+          </div>
+        </aside>
+      </section>
 
       <section v-else class="empty-state"><p class="eyebrow">{{ activeItem.label }}</p><h3>{{ activeItem.label }}页面骨架已预留</h3><p>当前阶段已接入设备、区域和点位数据模型，后续可继续扩展实时采集、报警规则和历史数据。</p></section>
     </section>

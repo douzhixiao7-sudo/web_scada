@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、实时监控模拟数据页面、报警闭环和报警规则维护 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、实时监控模拟数据页面、报警闭环、报警规则维护 MVP 和采集通道配置 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
 
 ## 本机位置
 
@@ -76,6 +76,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 当前报警规则维护仍是 MVP：支持查询、编辑和启停已有默认规则；新增规则、删除规则、恢复策略配置、历史高级筛选和报表尚未开发。
 
+
+## 采集通道配置 MVP
+
+后端已提供采集通道配置 MVP：首次启动会创建 `scada_collect_channel` 和 `scada_collect_binding`，按设备自动生成 1 个默认采集通道，并把该设备下点位绑定到通道。接口包括 `GET /api/collect/channels`、`PUT /api/collect/channels/{id}`、`GET /api/collect/channels/{id}/bindings`、`PUT /api/collect/channels/{channelId}/bindings/{bindingId}` 和 `POST /api/collect/channels/{id}/poll`。
+
+前端“系统设置”已增加采集通道配置页，可查看通道、编辑主机/端口/周期/启停、查看点位绑定、启停单个绑定，并用“模拟心跳”记录最后采集时间。当前阶段只做配置模型和接口，不启动真实采集线程，不连接 PLC。
+
 ## Modbus 数据区语义
 
 系统字典已维护 `modbus_area`：`0` 表示 Coil 线圈区，可读写，常用于 DO 控制输出；`1` 表示 Discrete Input 离散输入区，只读，常用于 DI 状态输入；`3` 表示 Input Register 输入寄存器区，只读，常用于 AI/测量值；`4` 表示 Holding Register 保持寄存器区，可读写，常用于 AO/设定值。
@@ -94,5 +101,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 Modbus 采集、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入采集通道模型、历史数据设计或报警高级筛选。
+TDengine、真实 Modbus 采集线程、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入 Modbus 仿真数据源、采集调度服务或历史数据设计。
 

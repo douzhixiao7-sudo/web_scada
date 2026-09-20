@@ -210,6 +210,40 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_alarm_rule_enabled(enabled)
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_collect_channel (
+                    id bigint primary key auto_increment,
+                    device_id bigint not null,
+                    name varchar(128) not null,
+                    code varchar(64) not null unique,
+                    protocol varchar(32) not null,
+                    host varchar(64) not null default '',
+                    port int null,
+                    poll_interval_ms int not null default 1000,
+                    enabled tinyint not null default 1,
+                    status varchar(32) not null default 'READY',
+                    last_polled_at timestamp null,
+                    created_at timestamp not null default current_timestamp,
+                    updated_at timestamp not null default current_timestamp on update current_timestamp,
+                    unique key uk_scada_collect_channel_device(device_id),
+                    index idx_scada_collect_channel_enabled(enabled),
+                    index idx_scada_collect_channel_status(status)
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_collect_binding (
+                    id bigint primary key auto_increment,
+                    channel_id bigint not null,
+                    point_id bigint not null,
+                    enabled tinyint not null default 1,
+                    created_at timestamp not null default current_timestamp,
+                    updated_at timestamp not null default current_timestamp on update current_timestamp,
+                    unique key uk_scada_collect_binding_channel_point(channel_id, point_id),
+                    index idx_scada_collect_binding_channel(channel_id),
+                    index idx_scada_collect_binding_point(point_id),
+                    index idx_scada_collect_binding_enabled(enabled)
+                )
+                """);
         addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
         addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");
@@ -357,6 +391,7 @@ public class DatabaseInitializer implements ApplicationRunner {
         cleanupLegacyDemoDevices();
         seedJindouhePointTable();
         seedAlarmRules();
+        seedCollectChannels();
     }
 
     private void seedAreas() {
@@ -498,6 +533,34 @@ public class DatabaseInitializer implements ApplicationRunner {
                 """, point.id(), point.code(), point.name(), ruleName, ruleType, operator, thresholdValue, level, message);
     }
 
+    private void seedCollectChannels() {
+        List<CollectChannelSeed> devices = jdbcTemplate.query("""
+                select id, name, code, protocol, ip_address, port
+                from scada_device
+                order by id
+                """, (rs, rowNum) -> new CollectChannelSeed(
+                rs.getLong("id"),
+                rs.getString("name"),
+                rs.getString("code"),
+                rs.getString("protocol"),
+                rs.getString("ip_address"),
+                (Integer) rs.getObject("port")
+        ));
+        for (CollectChannelSeed device : devices) {
+            jdbcTemplate.update("""
+                    insert into scada_collect_channel(device_id, name, code, protocol, host, port, poll_interval_ms, enabled, status)
+                    values (?, ?, ?, ?, ?, ?, 1000, 1, 'READY')
+                    on duplicate key update name = values(name), protocol = values(protocol), host = values(host), port = values(port)
+                    """, device.id(), device.name() + "采集通道", device.code() + "_CH", device.protocol(), device.host(), device.port());
+            Long channelId = jdbcTemplate.queryForObject("select id from scada_collect_channel where device_id = ?", Long.class, device.id());
+            jdbcTemplate.update("""
+                    insert ignore into scada_collect_binding(channel_id, point_id, enabled)
+                    select ?, id, 1
+                    from scada_point
+                    where device_id = ?
+                    """, channelId, device.id());
+        }
+    }
     private double parseDouble(String value) {
         if (value == null || value.isBlank()) {
             return 1.0;
@@ -561,6 +624,9 @@ public class DatabaseInitializer implements ApplicationRunner {
     }
 
     private record AlarmRuleSeed(Long id, String code, String name, String unit) {
+    }
+
+    private record CollectChannelSeed(Long id, String name, String code, String protocol, String host, Integer port) {
     }
 }
 
