@@ -1,6 +1,6 @@
 # Web SCADA 验证记录
 
-验证时间：2026-09-20 09:21（Asia/Shanghai）
+验证时间：2026-09-20 09:52（Asia/Shanghai）
 
 ## 已验证
 
@@ -23,14 +23,16 @@
 - 字典接口：`/api/dictionaries` 返回 7 类字典；批量字典项接口返回设备状态 4 项、通讯协议 4 项、设备类型 6 项、点位数据类型 4 项、读写属性 3 项、点位单位 7 项。
 - 金斗河现场点表：Excel 已转换为 `jindouhe_points.csv`，启动后初始化 2 个现场区域、10 个设备对象、270 个点位。
 - 实时模拟接口：`/api/realtime/values?deviceId=...` 可返回模拟实时值；`4#主机` 点位 35 条，模拟值 35 条，首点 `DI_ZJ4_YX` 质量 `GOOD`。
-- 报警闭环接口：`/api/alarms/active` 返回活动报警 61 条；`POST /api/alarms/events/{id}/ack` 确认成功，状态变为 `ACKED`，确认人为 `admin`；`/api/alarms/events?status=ACKED` 可查询已确认事件。
+- 报警闭环接口：`/api/alarms/active` 可返回活动报警；`POST /api/alarms/events/{id}/ack` 确认成功，状态变为 `ACKED`，确认人为 `admin`；`/api/alarms/events?status=ACKED` 可查询已确认事件。
+- 报警规则接口：`/api/alarms/rules?enabled=true` 可查询启用规则；`PUT /api/alarms/rules/{id}` 可更新规则名称、阈值、等级、内容和启停状态；更新后 `/api/alarms/active` 仍可按规则计算活动报警。
 - Modbus 数据区字典：`/api/dictionaries/modbus_area/items` 返回 4 项，分别为 0区 Coil、1区 Discrete Input、3区 Input Register、4区 Holding Register。
 
 ## 当前范围
 
-项目包含可运行框架、基础连接验证、开发期认证菜单、基于金斗河现场点表的设备/点位台账、系统字典和实时监控模拟数据页面。当前没有真实 PLC 采集、控制下发、报警规则维护页面、历史高级筛选、历史数据或组态功能。
+项目包含可运行框架、基础连接验证、开发期认证菜单、基于金斗河现场点表的设备/点位台账、系统字典、实时监控模拟数据页面、报警闭环和报警规则维护 MVP。当前没有真实 PLC 采集、控制下发、报警规则新增/删除、历史高级筛选、历史数据或组态功能。
 
 ## 本地文件
 
 `.local/` 和 `.run/` 包含本机配置、密码、缓存、日志或进程记录，已被 Git 忽略，不提交到 GitHub。
+
 

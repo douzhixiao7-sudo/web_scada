@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、实时监控模拟数据页面，以及报警闭环 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、实时监控模拟数据页面、报警闭环和报警规则维护 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
 
 ## 本机位置
 
@@ -72,9 +72,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 ## 报警闭环 MVP
 
-后端已提供报警闭环 MVP：`/api/alarms/active` 会按实时模拟值计算活动报警并同步写入 `scada_alarm_event`；`/api/alarms/events?status=...` 支持按状态查询；`POST /api/alarms/events/{id}/ack` 支持确认和备注。规则包含质量异常、数据超时、故障信号触发，以及部分数值越限。前端“报警中心”已支持状态筛选、确认和备注。
+后端已提供报警闭环 MVP：`/api/alarms/active` 会按实时模拟值计算活动报警并同步写入 `scada_alarm_event`；`/api/alarms/events?status=...` 支持按状态查询；`POST /api/alarms/events/{id}/ack` 支持确认和备注；`/api/alarms/rules` 支持按设备、点位和启用状态查询报警规则；`PUT /api/alarms/rules/{id}` 支持维护规则名称、阈值、等级、内容和启停状态。首次启动会自动创建 `scada_alarm_rule`，并按现场点表生成质量异常、数据超时、故障信号、开度、电流、电压等默认规则。前端“报警中心”已支持状态筛选、确认备注和规则维护。
 
-当前报警闭环仍是 MVP：规则维护页面、恢复策略配置、历史高级筛选和报表尚未开发。
+当前报警规则维护仍是 MVP：支持查询、编辑和启停已有默认规则；新增规则、删除规则、恢复策略配置、历史高级筛选和报表尚未开发。
 
 ## Modbus 数据区语义
 
@@ -94,5 +94,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 Modbus 采集、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警规则维护、历史数据与 HMI 均未开发。下一阶段可进入报警规则维护、采集通道模型或历史数据设计。
+TDengine、真实 Modbus 采集、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入采集通道模型、历史数据设计或报警高级筛选。
 

@@ -291,3 +291,12 @@ tr.selected { background: rgba(65,199,185,.07); }
 @media (max-width: 560px) {
   .monitor-summary { grid-template-columns: 1fr; }
 }
+.alarm-page {
+  display: grid;
+  gap: 16px;
+}
+.alarm-page .table-wrap small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}

@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,6 +28,19 @@ public class AlarmController {
     @GetMapping("/events")
     public List<AlarmEventResponse> listEvents(@RequestParam(required = false) String status) {
         return alarmService.listEvents(status);
+    }
+
+    @GetMapping("/rules")
+    public List<AlarmRuleResponse> listRules(
+            @RequestParam(required = false) Long deviceId,
+            @RequestParam(required = false) Long pointId,
+            @RequestParam(required = false) Boolean enabled) {
+        return alarmService.listRules(deviceId, pointId, enabled);
+    }
+
+    @PutMapping("/rules/{id}")
+    public AlarmRuleResponse updateRule(@PathVariable Long id, @RequestBody AlarmRuleRequest request) {
+        return alarmService.updateRule(id, request);
     }
 
     @PostMapping("/events/{id}/ack")

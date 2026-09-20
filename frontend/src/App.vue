@@ -45,6 +45,7 @@ type Point = {
 }
 type RealtimeValue = { pointId: number; deviceId: number; pointCode: string; value: string; quality: string; collectedAt: string }
 type AlarmEvent = { id: number; alarmKey: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; level: string; message: string; value: string; quality: string; status: string; occurredAt: string; lastSeenAt: string; recoveredAt?: string | null; acknowledgedAt?: string | null; acknowledgedBy: string; ackNote: string }
+type AlarmRule = { id: number; pointId: number; pointCode: string; pointName: string; ruleName: string; ruleType: string; operator: string; thresholdValue: number | null; level: string; message: string; enabled: boolean }
 
 type DeviceForm = {
   areaId: number | null
@@ -99,6 +100,9 @@ const realtimeValues = ref<Record<number, RealtimeValue>>({})
 const alarmRows = ref<AlarmEvent[]>([])
 const alarmLoading = ref(false)
 const alarmStatusFilter = ref('ACTIVE')
+const alarmRules = ref<AlarmRule[]>([])
+const alarmRuleDeviceId = ref<number | null>(null)
+const alarmRuleLoading = ref(false)
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -202,6 +206,7 @@ async function loadCurrentUser() {
     isAuthed.value = true
     await loadDeviceData()
     await loadAlarms()
+    await loadAlarmRules()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -240,6 +245,7 @@ async function submitLogin() {
     await loadDictionaries()
     await loadDeviceData()
     await loadAlarms()
+    await loadAlarmRules()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -283,6 +289,39 @@ async function acknowledgeAlarm(alarm: AlarmEvent) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ note }),
   })
+  await loadAlarms()
+}
+
+async function loadAlarmRules() {
+  alarmRuleLoading.value = true
+  try {
+    const query = alarmRuleDeviceId.value ? `?deviceId=${alarmRuleDeviceId.value}` : ''
+    alarmRules.value = await apiFetch<AlarmRule[]>(`/api/alarms/rules${query}`)
+  } finally {
+    alarmRuleLoading.value = false
+  }
+}
+
+async function editAlarmRule(rule: AlarmRule) {
+  const thresholdInput = window.prompt('阈值，质量类规则可留空', rule.thresholdValue == null ? '' : String(rule.thresholdValue))
+  if (thresholdInput === null) return
+  const level = window.prompt('报警等级：高 / 中 / 低', rule.level)
+  if (level === null) return
+  const enabledInput = window.prompt('是否启用：1 启用，0 停用', rule.enabled ? '1' : '0')
+  if (enabledInput === null) return
+  await apiFetch<AlarmRule>(`/api/alarms/rules/${rule.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ruleName: rule.ruleName,
+      operator: rule.operator,
+      thresholdValue: thresholdInput.trim() ? Number(thresholdInput) : null,
+      level,
+      message: rule.message,
+      enabled: enabledInput.trim() !== '0',
+    }),
+  })
+  await loadAlarmRules()
   await loadAlarms()
 }
 
@@ -603,9 +642,10 @@ onMounted(async () => {
         </aside>
       </section>
 
-      <section v-else-if="activeMenu === 'alarms'" class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section>
+      <section v-else-if="activeMenu === 'alarms'" class="alarm-page"><section class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section><section class="panel page-panel"><div class="panel-head"><h3>报警规则维护</h3><span>{{ alarmRuleLoading ? '加载中' : `规则 ${alarmRules.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>设备</span><select v-model.number="alarmRuleDeviceId" @change="loadAlarmRules"><option :value="null">全部设备</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label><button class="ghost compact" type="button" @click="loadAlarmRules">刷新规则</button></div><div class="table-wrap"><table><thead><tr><th>点位</th><th>规则</th><th>类型</th><th>阈值</th><th>等级</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="rule in alarmRules" :key="rule.id"><td>{{ rule.pointName }}<small>{{ rule.pointCode }}</small></td><td>{{ rule.ruleName }}<small>{{ rule.message }}</small></td><td>{{ rule.ruleType }}</td><td>{{ rule.thresholdValue ?? '-' }}</td><td>{{ rule.level }}</td><td><span :class="['tag', rule.enabled ? 'ok' : 'idle']">{{ rule.enabled ? '启用' : '停用' }}</span></td><td><button class="ghost compact" type="button" @click="editAlarmRule(rule)">编辑</button></td></tr></tbody></table></div></section></section>
 
       <section v-else class="empty-state"><p class="eyebrow">{{ activeItem.label }}</p><h3>{{ activeItem.label }}页面骨架已预留</h3><p>当前阶段已接入设备、区域和点位数据模型，后续可继续扩展实时采集、报警规则和历史数据。</p></section>
     </section>
   </main>
 </template>
+

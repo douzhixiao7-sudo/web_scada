@@ -190,6 +190,26 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_alarm_point(point_id)
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_alarm_rule (
+                    id bigint primary key auto_increment,
+                    point_id bigint not null,
+                    point_code varchar(64) not null,
+                    point_name varchar(128) not null,
+                    rule_name varchar(128) not null,
+                    rule_type varchar(32) not null,
+                    operator varchar(16) not null default '',
+                    threshold_value decimal(14,4) null,
+                    level varchar(16) not null,
+                    message varchar(128) not null,
+                    enabled tinyint not null default 1,
+                    created_at timestamp not null default current_timestamp,
+                    updated_at timestamp not null default current_timestamp on update current_timestamp,
+                    unique key uk_scada_alarm_rule_point_type_msg(point_id, rule_type, message),
+                    index idx_scada_alarm_rule_point(point_id),
+                    index idx_scada_alarm_rule_enabled(enabled)
+                )
+                """);
         addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
         addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");
@@ -336,6 +356,7 @@ public class DatabaseInitializer implements ApplicationRunner {
         cleanupLegacyDemoPoints();
         cleanupLegacyDemoDevices();
         seedJindouhePointTable();
+        seedAlarmRules();
     }
 
     private void seedAreas() {
@@ -442,6 +463,41 @@ public class DatabaseInitializer implements ApplicationRunner {
                 point.sixnetAddress(), point.iconicsPath(), point.remark());
     }
 
+    private void seedAlarmRules() {
+        List<AlarmRuleSeed> points = jdbcTemplate.query("""
+                select id, code, name, unit
+                from scada_point
+                order by id
+                """, (rs, rowNum) -> new AlarmRuleSeed(rs.getLong("id"), rs.getString("code"), rs.getString("name"), rs.getString("unit")));
+        for (AlarmRuleSeed point : points) {
+            seedAlarmRule(point, "质量异常", "QUALITY_BAD", "=", null, "高", "点位质量异常");
+            seedAlarmRule(point, "数据超时", "QUALITY_STALE", "=", null, "中", "点位数据超时");
+            String text = (point.code() + " " + point.name()).toUpperCase(java.util.Locale.ROOT);
+            if (text.contains("故障") || text.contains("_GZ")) {
+                seedAlarmRule(point, "故障触发", "EQUAL", "=", 1.0, "高", "故障信号触发");
+            }
+            if ("%".equals(point.unit()) || text.contains("开度")) {
+                seedAlarmRule(point, "开度高限", "HIGH", ">", 90.0, "中", "开度超过 90%");
+            }
+            if ("A".equals(point.unit()) || text.contains("电流")) {
+                seedAlarmRule(point, "电流高限", "HIGH", ">", 95.0, "中", "电流偏高");
+            }
+            if (text.contains("电压") || text.contains("UAB") || text.contains("UBC") || text.contains("UCA")) {
+                seedAlarmRule(point, "电压低限", "LOW", "<", 360.0, "低", "电压低限");
+                seedAlarmRule(point, "电压高限", "HIGH", ">", 410.0, "低", "电压高限");
+            }
+        }
+    }
+
+    private void seedAlarmRule(AlarmRuleSeed point, String ruleName, String ruleType, String operator, Double thresholdValue, String level, String message) {
+        jdbcTemplate.update("""
+                insert into scada_alarm_rule(point_id, point_code, point_name, rule_name, rule_type, operator, threshold_value, level, message, enabled)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                on duplicate key update point_code = values(point_code), point_name = values(point_name), rule_name = values(rule_name),
+                    operator = values(operator), threshold_value = values(threshold_value), level = values(level), message = values(message)
+                """, point.id(), point.code(), point.name(), ruleName, ruleType, operator, thresholdValue, level, message);
+    }
+
     private double parseDouble(String value) {
         if (value == null || value.isBlank()) {
             return 1.0;
@@ -502,6 +558,9 @@ public class DatabaseInitializer implements ApplicationRunner {
             String sixnetAddress,
             String iconicsPath,
             String remark) {
+    }
+
+    private record AlarmRuleSeed(Long id, String code, String name, String unit) {
     }
 }
 

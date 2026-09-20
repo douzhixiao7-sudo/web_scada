@@ -63,6 +63,47 @@ public class AlarmService {
                 """, (rs, rowNum) -> mapEvent(rs), normalized);
     }
 
+    public List<AlarmRuleResponse> listRules(Long deviceId, Long pointId, Boolean enabled) {
+        StringBuilder sql = new StringBuilder("""
+                select r.id, r.point_id, r.point_code, r.point_name, r.rule_name, r.rule_type, r.operator, r.threshold_value, r.level, r.message, r.enabled
+                from scada_alarm_rule r
+                join scada_point p on p.id = r.point_id
+                where 1 = 1
+                """);
+        ArrayList<Object> params = new ArrayList<>();
+        if (deviceId != null) {
+            sql.append(" and p.device_id = ?");
+            params.add(deviceId);
+        }
+        if (pointId != null) {
+            sql.append(" and r.point_id = ?");
+            params.add(pointId);
+        }
+        if (enabled != null) {
+            sql.append(" and r.enabled = ?");
+            params.add(enabled ? 1 : 0);
+        }
+        sql.append(" order by p.device_id, p.sort_order, r.id limit 1000");
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> mapRule(rs), params.toArray());
+    }
+
+    @Transactional
+    public AlarmRuleResponse updateRule(Long id, AlarmRuleRequest request) {
+        if (request == null || isBlank(request.ruleName()) || isBlank(request.level()) || isBlank(request.message())) {
+            throw new IllegalArgumentException("规则名称、等级和内容不能为空");
+        }
+        int updated = jdbcTemplate.update("""
+                update scada_alarm_rule
+                set rule_name = ?, operator = ?, threshold_value = ?, level = ?, message = ?, enabled = ?
+                where id = ?
+                """, clean(request.ruleName()), clean(request.operator()), request.thresholdValue(), clean(request.level()), clean(request.message()),
+                Boolean.FALSE.equals(request.enabled()) ? 0 : 1, id);
+        if (updated == 0) {
+            throw new IllegalArgumentException("报警规则不存在");
+        }
+        return getRule(id);
+    }
+
     @Transactional
     public AlarmEventResponse acknowledge(Long id, AlarmAckRequest request) {
         AuthUser user = CurrentUserHolder.user();
@@ -108,39 +149,46 @@ public class AlarmService {
                 if (value == null) {
                     continue;
                 }
-                ComputedAlarm alarm = evaluate(device, point, value);
-                if (alarm != null) {
-                    alarms.add(alarm);
+                for (AlarmRuleRow rule : listEnabledRules(point.id())) {
+                    ComputedAlarm alarm = evaluate(device, point, value, rule);
+                    if (alarm != null) {
+                        alarms.add(alarm);
+                    }
                 }
             }
         }
         return alarms;
     }
 
-    private ComputedAlarm evaluate(DeviceRow device, PointRow point, RealtimeValueResponse value) {
-        if ("BAD".equals(value.quality())) {
-            return alarm(device, point, value, "高", "点位质量异常");
-        }
-        if ("STALE".equals(value.quality())) {
-            return alarm(device, point, value, "中", "点位数据超时");
-        }
-        String text = (point.code() + " " + point.name()).toUpperCase();
-        double numeric = parseNumber(value.value());
-        if ((text.contains("故障") || text.contains("_GZ")) && "1".equals(value.value())) {
-            return alarm(device, point, value, "高", "故障信号触发");
-        }
-        if (("%".equals(point.unit()) || text.contains("开度")) && numeric > 90) {
-            return alarm(device, point, value, "中", "开度超过 90%");
-        }
-        if (("A".equals(point.unit()) || text.contains("电流")) && numeric > 95) {
-            return alarm(device, point, value, "中", "电流偏高");
-        }
-        if ((text.contains("电压") || text.contains("UAB") || text.contains("UBC") || text.contains("UCA")) && (numeric < 360 || numeric > 410)) {
-            return alarm(device, point, value, "低", "电压越限");
-        }
-        return null;
+    private List<AlarmRuleRow> listEnabledRules(Long pointId) {
+        return jdbcTemplate.query("""
+                select id, rule_name, rule_type, operator, threshold_value, level, message
+                from scada_alarm_rule
+                where point_id = ? and enabled = 1
+                order by id
+                """, (rs, rowNum) -> new AlarmRuleRow(
+                rs.getLong("id"),
+                rs.getString("rule_name"),
+                rs.getString("rule_type"),
+                rs.getString("operator"),
+                numberValue(rs.getObject("threshold_value")),
+                rs.getString("level"),
+                rs.getString("message")
+        ), pointId);
     }
 
+    private ComputedAlarm evaluate(DeviceRow device, PointRow point, RealtimeValueResponse value, AlarmRuleRow rule) {
+        double numeric = parseNumber(value.value());
+        boolean triggered = switch (rule.ruleType()) {
+            case "QUALITY_BAD" -> "BAD".equals(value.quality());
+            case "QUALITY_STALE" -> "STALE".equals(value.quality());
+            case "EQUAL" -> rule.thresholdValue() != null && numeric == rule.thresholdValue();
+            case "HIGH" -> rule.thresholdValue() != null && numeric > rule.thresholdValue();
+            case "LOW" -> rule.thresholdValue() != null && numeric < rule.thresholdValue();
+            default -> false;
+        };
+        return triggered ? alarm(device, point, value, rule.level(), rule.message()) : null;
+    }
     private ComputedAlarm alarm(DeviceRow device, PointRow point, RealtimeValueResponse value, String level, String message) {
         return new ComputedAlarm(
                 device.id() + "-" + point.id() + "-" + message,
@@ -196,6 +244,34 @@ public class AlarmService {
         return events.getFirst();
     }
 
+    private AlarmRuleResponse getRule(Long id) {
+        List<AlarmRuleResponse> rules = jdbcTemplate.query("""
+                select id, point_id, point_code, point_name, rule_name, rule_type, operator, threshold_value, level, message, enabled
+                from scada_alarm_rule
+                where id = ?
+                """, (rs, rowNum) -> mapRule(rs), id);
+        if (rules.isEmpty()) {
+            throw new IllegalArgumentException("报警规则不存在");
+        }
+        return rules.getFirst();
+    }
+
+    private AlarmRuleResponse mapRule(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new AlarmRuleResponse(
+                rs.getLong("id"),
+                rs.getLong("point_id"),
+                rs.getString("point_code"),
+                rs.getString("point_name"),
+                rs.getString("rule_name"),
+                rs.getString("rule_type"),
+                rs.getString("operator"),
+                numberValue(rs.getObject("threshold_value")),
+                rs.getString("level"),
+                rs.getString("message"),
+                rs.getBoolean("enabled")
+        );
+    }
+
     private AlarmEventResponse mapEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new AlarmEventResponse(
                 rs.getLong("id"),
@@ -234,6 +310,28 @@ public class AlarmService {
         return normalized;
     }
 
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private Double numberValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
     private double parseNumber(String value) {
         try {
             return Double.parseDouble(value);
@@ -248,7 +346,11 @@ public class AlarmService {
     private record PointRow(Long id, String code, String name, String dataType, String unit, String ioType, String modbusType) {
     }
 
+    private record AlarmRuleRow(Long id, String ruleName, String ruleType, String operator, Double thresholdValue, String level, String message) {
+    }
+
     private record ComputedAlarm(String alarmKey, Long deviceId, String deviceName, Long pointId, String pointCode, String pointName,
                                  String level, String message, String value, String quality, Instant occurredAt) {
     }
 }
+
