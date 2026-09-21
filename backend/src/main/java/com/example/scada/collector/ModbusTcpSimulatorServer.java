@@ -7,6 +7,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.time.Instant;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -18,6 +20,8 @@ public class ModbusTcpSimulatorServer implements SmartLifecycle {
     private static final int PORT = 1502;
 
     private final ExecutorService clientExecutor = Executors.newCachedThreadPool();
+    private final ConcurrentMap<Integer, Integer> coilOverrides = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Integer, Integer> holdingRegisterOverrides = new ConcurrentHashMap<>();
     private volatile boolean running;
     private Thread serverThread;
     private ServerSocket serverSocket;
@@ -108,6 +112,8 @@ public class ModbusTcpSimulatorServer implements SmartLifecycle {
         return switch (function) {
             case 1, 2 -> bitResponse(function, address, quantity);
             case 3, 4 -> registerResponse(function, address, quantity);
+            case 5 -> writeSingleCoil(address, unsignedShort(request[3], request[4]));
+            case 6 -> writeSingleRegister(address, unsignedShort(request[3], request[4]));
             default -> new byte[]{(byte) (function | 0x80), 0x01};
         };
     }
@@ -140,7 +146,23 @@ public class ModbusTcpSimulatorServer implements SmartLifecycle {
         return response;
     }
 
+    private byte[] writeSingleCoil(int address, int value) {
+        if (value != 0xff00 && value != 0x0000) {
+            return new byte[]{(byte) 0x85, 0x03};
+        }
+        coilOverrides.put(address, value == 0xff00 ? 1 : 0);
+        return new byte[]{0x05, (byte) (address >> 8), (byte) address, (byte) (value >> 8), (byte) value};
+    }
+
+    private byte[] writeSingleRegister(int address, int value) {
+        holdingRegisterOverrides.put(address, Math.max(0, Math.min(65535, value)));
+        return new byte[]{0x06, (byte) (address >> 8), (byte) address, (byte) (value >> 8), (byte) value};
+    }
+
     private int bitValue(int function, int address, long tick) {
+        if (function == 1 && coilOverrides.containsKey(address)) {
+            return coilOverrides.get(address);
+        }
         if (Math.floorMod(address, 23) == 3) {
             return Math.floorMod(address + tick / 20, 29) == 0 ? 1 : 0;
         }
@@ -148,6 +170,9 @@ public class ModbusTcpSimulatorServer implements SmartLifecycle {
     }
 
     private int registerValue(int function, int address, long tick) {
+        if (function == 3 && holdingRegisterOverrides.containsKey(address)) {
+            return holdingRegisterOverrides.get(address);
+        }
         double wave = Math.sin((tick + address + function * 17) / 10.0);
         double base = function == 4 ? 50 : 25;
         double value = base + wave * 20 + Math.floorMod(address, 100) / 10.0;

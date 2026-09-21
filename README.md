@@ -99,6 +99,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 系统字典已维护 `modbus_area`：`0` 表示 Coil 线圈区，可读写，常用于 DO 控制输出；`1` 表示 Discrete Input 离散输入区，只读，常用于 DI 状态输入；`3` 表示 Input Register 输入寄存器区，只读，常用于 AI/测量值；`4` 表示 Holding Register 保持寄存器区，可读写，常用于 AO/设定值。
 
+## 控制下发 MVP
+
+后端已提供控制下发 MVP：`GET /api/control/commands?deviceId=...` 查询最近控制命令，`POST /api/control/commands` 提交控制命令。命令会先写入 `scada_control_command`，状态为 `PENDING`，随后通过 Modbus TCP 客户端写入本机仿真 PLC，最终更新为 `SUCCESS` 或 `FAILED`。
+
+当前只允许向 Modbus `0` 区 Coil 和 `4` 区 Holding Register 下发；`1` 区 Discrete Input 和 `3` 区 Input Register 按协议只读处理。前端实时监控页会根据点位读写属性和 Modbus 区域显示“下发”或“只读”，右侧展示最近控制命令。
+
 ## 工程结构
 
 ```text
@@ -113,5 +119,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 PLC 接入、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入真实 Modbus 设备配置、控制下发 MVP 或历史数据设计。
+TDengine、真实 PLC 接入、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、历史数据与 HMI 均未开发。下一阶段可进入历史数据 MVP、真实 Modbus 设备接入或控制权限审计增强。
 

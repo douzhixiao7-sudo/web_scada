@@ -48,6 +48,7 @@ type AlarmEvent = { id: number; alarmKey: string; deviceId: number; deviceName: 
 type AlarmRule = { id: number; pointId: number; pointCode: string; pointName: string; ruleName: string; ruleType: string; operator: string; thresholdValue: number | null; level: string; message: string; enabled: boolean }
 type CollectChannel = { id: number; deviceId: number; deviceName: string; deviceCode: string; name: string; code: string; protocol: string; host: string; port: number | null; pollIntervalMs: number; enabled: boolean; status: string; pointCount: number; lastPolledAt: string | null }
 type CollectBinding = { id: number; channelId: number; pointId: number; pointCode: string; pointName: string; address: string; modbusType: string; accessMode: string; enabled: boolean }
+type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; targetValue: number; status: string; message: string; requestedBy: string; createdAt: string; executedAt?: string | null }
 
 type DeviceForm = {
   areaId: number | null
@@ -107,6 +108,8 @@ const alarmRuleDeviceId = ref<number | null>(null)
 const alarmRuleLoading = ref(false)
 const collectChannels = ref<CollectChannel[]>([])
 const collectBindings = ref<CollectBinding[]>([])
+const controlCommands = ref<ControlCommand[]>([])
+const controlLoading = ref(false)
 const collectChannelLoading = ref(false)
 const selectedCollectChannelId = ref<number | null>(null)
 let monitorRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -217,6 +220,7 @@ async function loadCurrentUser() {
     await loadAlarms()
     await loadAlarmRules()
     await loadCollectChannels()
+    await loadControlCommands()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -257,6 +261,7 @@ async function submitLogin() {
     await loadAlarms()
     await loadAlarmRules()
     await loadCollectChannels()
+    await loadControlCommands()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -281,6 +286,7 @@ async function refreshMonitorPoints() {
   if (selectedDevice.value?.id === device.id && points.value.length) {
     const valueRows = await apiFetch<RealtimeValue[]>(`/api/realtime/values?deviceId=${device.id}`)
     realtimeValues.value = Object.fromEntries(valueRows.map((value) => [value.pointId, value]))
+    await loadControlCommands(device.id)
     return
   }
   await selectDevice(device)
@@ -450,12 +456,48 @@ async function selectDevice(device: Device) {
   ])
   points.value = pointRows
   realtimeValues.value = Object.fromEntries(valueRows.map((value) => [value.pointId, value]))
+  await loadControlCommands(device.id)
   editingPointId.value = null
   pointForm.value = emptyPointForm()
 }
 
 function realtimeValue(point: Point) {
   return realtimeValues.value[point.id]
+}
+
+function isWritableControlPoint(point: Point) {
+  return point.accessMode !== 'R' && (point.modbusType === '0' || point.modbusType === '4')
+}
+
+async function loadControlCommands(deviceId = monitorSelectedDevice.value?.id ?? null) {
+  controlLoading.value = true
+  try {
+    const query = deviceId ? `?deviceId=${deviceId}` : ''
+    controlCommands.value = await apiFetch<ControlCommand[]>(`/api/control/commands${query}`)
+  } finally {
+    controlLoading.value = false
+  }
+}
+
+async function sendControl(point: Point) {
+  const defaultValue = point.dataType === 'BOOLEAN' ? (realtimeValue(point)?.value === '1' ? '0' : '1') : (realtimeValue(point)?.value ?? '')
+  const input = window.prompt(`下发控制：${point.name}，请输入目标值`, defaultValue)
+  if (input === null) return
+  const target = Number(input)
+  if (!Number.isFinite(target)) {
+    window.alert('目标值必须是数字，布尔点请填 0 或 1')
+    return
+  }
+  const command = await apiFetch<ControlCommand>('/api/control/commands', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pointId: point.id, targetValue: target }),
+  })
+  await refreshMonitorPoints()
+  await loadControlCommands(point.deviceId)
+  if (command.status !== 'SUCCESS') {
+    window.alert(command.message || '控制命令执行失败')
+  }
 }
 
 function startCreateDevice() {
@@ -709,7 +751,7 @@ onUnmounted(() => {
           </div>
           <div class="table-wrap">
             <table class="monitor-table">
-              <thead><tr><th>点位</th><th>现场来源</th><th>数据类型</th><th>Modbus 地址</th><th>读写</th><th>当前值</th><th>质量</th><th>采集时间</th></tr></thead>
+              <thead><tr><th>点位</th><th>现场来源</th><th>数据类型</th><th>Modbus 地址</th><th>读写</th><th>当前值</th><th>质量</th><th>采集时间</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="point in points" :key="point.id">
                   <td><strong>{{ point.name }}</strong><small>{{ point.code }}</small></td>
@@ -720,15 +762,17 @@ onUnmounted(() => {
                   <td><span class="placeholder-value">{{ realtimeValue(point)?.value ?? '待接入' }}{{ point.unit && realtimeValue(point) ? ` ${point.unit}` : '' }}</span></td>
                   <td><span :class="['tag', realtimeValue(point)?.quality === 'GOOD' ? 'ok' : realtimeValue(point)?.quality === 'BAD' ? 'danger' : 'idle']">{{ realtimeValue(point)?.quality ?? '未采集' }}</span></td>
                   <td>{{ realtimeValue(point)?.collectedAt ? new Date(realtimeValue(point)!.collectedAt).toLocaleTimeString() : '等待实时接口' }}</td>
+                  <td><button class="ghost compact" type="button" :disabled="!isWritableControlPoint(point)" @click="sendControl(point)">{{ isWritableControlPoint(point) ? '下发' : '只读' }}</button></td>
                 </tr>
               </tbody>
             </table>
           </div>
         </section>
         <aside class="panel monitor-side">
-          <div class="panel-head"><h3>实时值接口契约</h3><span>MVP 预留</span></div>
-          <dl class="status-list contract-list"><dt>pointId</dt><dd>点位 ID</dd><dt>value</dt><dd>当前值</dd><dt>quality</dt><dd>GOOD / BAD / STALE</dd><dt>collectedAt</dt><dd>采集时间</dd></dl>
-          <p class="muted">当前阶段由后端内置仿真采集器按通道点位绑定生成实时值，写入 Redis 当前值缓存；暂不连接真实 PLC，不写历史库。</p>
+          <div class="panel-head"><h3>控制命令</h3><span>{{ controlLoading ? '加载中' : `${controlCommands.length} 条` }}</span></div>
+          <div class="command-list"><article v-for="command in controlCommands" :key="command.id"><span :class="['tag', command.status === 'SUCCESS' ? 'ok' : command.status === 'FAILED' ? 'danger' : 'idle']">{{ command.status }}</span><div><strong>{{ command.pointName }} → {{ command.targetValue }}</strong><small>{{ command.message }} · {{ new Date(command.createdAt).toLocaleTimeString() }}</small></div></article><p v-if="!controlCommands.length && !controlLoading" class="muted">当前设备暂无控制命令。</p></div>
+          <dl class="status-list contract-list"><dt>0 区</dt><dd>线圈，可写 0/1</dd><dt>1 区</dt><dd>离散输入，只读</dd><dt>3 区</dt><dd>输入寄存器，只读</dd><dt>4 区</dt><dd>保持寄存器，可写数值</dd></dl>
+          <p class="muted">下发命令先写入命令表，再写 Modbus TCP 仿真器；实时采集继续从仿真器读取并刷新 Redis 当前值缓存。</p>
         </aside>
       </section>
 
