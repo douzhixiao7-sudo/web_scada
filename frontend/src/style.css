@@ -357,3 +357,14 @@ tr.selected { background: rgba(65,199,185,.07); }
 @media (max-width: 1160px) {
   .history-page { grid-template-columns: 1fr; }
 }
+.diagnostic-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(65,199,185,.36);
+  background: rgba(65,199,185,.07);
+}
+.diagnostic-card small {
+  color: var(--muted);
+}

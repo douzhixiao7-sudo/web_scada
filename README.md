@@ -93,7 +93,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 后端已提供采集通道配置 MVP：首次启动会创建 `scada_collect_channel` 和 `scada_collect_binding`，按设备自动生成 1 个默认采集通道，并把该设备下点位绑定到通道。接口包括 `GET /api/collect/channels`、`PUT /api/collect/channels/{id}`、`GET /api/collect/channels/{id}/bindings`、`PUT /api/collect/channels/{channelId}/bindings/{bindingId}` 和 `POST /api/collect/channels/{id}/poll`。
 
-前端“系统设置”已增加采集通道配置页，可查看通道、编辑主机/端口/周期/启停、查看点位绑定、启停单个绑定，并用“模拟心跳”记录最后采集时间。当前阶段只做配置模型和接口，不启动真实采集线程，不连接 PLC。
+前端“系统设置”已增加采集通道配置页，可查看通道、编辑主机/端口/周期/启停、查看点位绑定、启停单个绑定，并用“模拟心跳”记录最后采集时间。
+
+## 采集通道诊断与真实 Modbus 接入准备 MVP
+
+采集通道已增加仿真/真实模式、站号、超时、重试次数、最后成功时间、失败原因、耗时和连续失败次数。后端提供 `POST /api/collect/channels/{id}/test-connection` 测试连接，`POST /api/collect/channels/{id}/test-read?pointId=...` 测试单点读取。前端系统设置页提供“测试连接”“测试读取”和点位级“读一次”。
+
+当前默认通道模式为 `SIMULATOR`，用于本机 Modbus 仿真 PLC。现场接入真实 PLC 时，可把通道模式改为 `REAL`，配置真实 IP、端口、超时和重试，再用诊断按钮逐点校验地址、区域和数据类型。
 
 ## Modbus 数据区语义
 
@@ -127,5 +133,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、真实 PLC 接入、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。下一阶段可进入真实 Modbus 设备接入、控制权限审计增强或历史报表。
+TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。真实 Modbus 接入诊断已准备好，下一阶段可进入控制权限审计增强、报警规则新增/删除或历史报表。
 

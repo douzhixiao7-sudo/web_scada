@@ -46,9 +46,10 @@ type Point = {
 type RealtimeValue = { pointId: number; deviceId: number; pointCode: string; value: string; quality: string; collectedAt: string }
 type AlarmEvent = { id: number; alarmKey: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; level: string; message: string; value: string; quality: string; status: string; occurredAt: string; lastSeenAt: string; recoveredAt?: string | null; acknowledgedAt?: string | null; acknowledgedBy: string; ackNote: string }
 type AlarmRule = { id: number; pointId: number; pointCode: string; pointName: string; ruleName: string; ruleType: string; operator: string; thresholdValue: number | null; level: string; message: string; enabled: boolean }
-type CollectChannel = { id: number; deviceId: number; deviceName: string; deviceCode: string; name: string; code: string; protocol: string; host: string; port: number | null; pollIntervalMs: number; enabled: boolean; status: string; pointCount: number; lastPolledAt: string | null }
+type CollectChannel = { id: number; deviceId: number; deviceName: string; deviceCode: string; name: string; code: string; protocol: string; channelMode: string; host: string; port: number | null; slaveId: number; timeoutMs: number; retryCount: number; pollIntervalMs: number; enabled: boolean; status: string; pointCount: number; lastPolledAt: string | null; lastSuccessAt: string | null; lastError: string; lastLatencyMs: number | null; consecutiveFailures: number }
 type CollectBinding = { id: number; channelId: number; pointId: number; pointCode: string; pointName: string; address: string; modbusType: string; accessMode: string; enabled: boolean }
 type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; targetValue: number; status: string; message: string; requestedBy: string; createdAt: string; executedAt?: string | null }
+type CollectDiagnostic = { channelId: number; channelName: string; success: boolean; message: string; latencyMs: number; pointId: number | null; pointCode: string; pointName: string; rawValue: string; quality: string }
 type HistoryValue = { id: number; deviceId: number; pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 type HistoryLatest = { pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 
@@ -121,6 +122,7 @@ const historyPointId = ref<number | null>(null)
 const historyRangeHours = ref(1)
 const collectChannelLoading = ref(false)
 const selectedCollectChannelId = ref<number | null>(null)
+const collectDiagnosticResult = ref<CollectDiagnostic | null>(null)
 let monitorRefreshTimer: ReturnType<typeof setInterval> | null = null
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
@@ -397,6 +399,12 @@ async function editCollectChannel(channel: CollectChannel) {
   if (intervalInput === null) return
   const enabledInput = window.prompt('是否启用：1 启用，0 停用', channel.enabled ? '1' : '0')
   if (enabledInput === null) return
+  const mode = window.prompt('通道模式：SIMULATOR 仿真 / REAL 真实', channel.channelMode || 'SIMULATOR')
+  if (mode === null) return
+  const timeoutInput = window.prompt('超时时间，单位毫秒', String(channel.timeoutMs || 1200))
+  if (timeoutInput === null) return
+  const retryInput = window.prompt('重试次数，0-5', String(channel.retryCount ?? 1))
+  if (retryInput === null) return
   await apiFetch<CollectChannel>(`/api/collect/channels/${channel.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -407,6 +415,10 @@ async function editCollectChannel(channel: CollectChannel) {
       port: portInput.trim() ? Number(portInput) : null,
       pollIntervalMs: intervalInput.trim() ? Number(intervalInput) : channel.pollIntervalMs,
       enabled: enabledInput.trim() !== '0',
+      channelMode: channel.channelMode || 'SIMULATOR',
+      slaveId: channel.slaveId || 1,
+      timeoutMs: channel.timeoutMs || 1200,
+      retryCount: channel.retryCount ?? 1,
       status: channel.status,
     }),
   })
@@ -427,6 +439,22 @@ async function toggleCollectBinding(binding: CollectBinding) {
   })
   await loadCollectBindings()
   await loadCollectChannels()
+}
+
+async function testCollectConnection(channel: CollectChannel) {
+  collectDiagnosticResult.value = await apiFetch<CollectDiagnostic>(`/api/collect/channels/${channel.id}/test-connection`, { method: 'POST' })
+  await loadCollectChannels()
+}
+
+async function testCollectRead(channel: CollectChannel, binding?: CollectBinding) {
+  const pointId = binding?.pointId ?? collectBindings.value.find((item) => item.enabled)?.pointId
+  const query = pointId ? `?pointId=${pointId}` : ''
+  collectDiagnosticResult.value = await apiFetch<CollectDiagnostic>(`/api/collect/channels/${channel.id}/test-read${query}`, { method: 'POST' })
+  await loadCollectChannels()
+}
+
+function channelModeText(mode: string) {
+  return mode === 'REAL' ? '真实设备' : '仿真'
 }
 
 function alarmStatusText(status: string) {
@@ -874,17 +902,17 @@ onUnmounted(() => {
           </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>设备</th><th>协议</th><th>地址</th><th>周期</th><th>点位</th><th>状态</th><th>最后采集</th><th>操作</th></tr></thead>
+              <thead><tr><th>设备</th><th>模式/协议</th><th>地址</th><th>周期</th><th>诊断</th><th>状态</th><th>最后成功</th><th>操作</th></tr></thead>
               <tbody>
                 <tr v-for="channel in collectChannels" :key="channel.id" :class="{ selected: selectedCollectChannelId === channel.id }">
                   <td><button class="link-button" type="button" @click="selectedCollectChannelId = channel.id; changeCollectChannel()">{{ channel.name }}<small>{{ channel.deviceName }} · {{ channel.code }}</small></button></td>
-                  <td>{{ channel.protocol }}</td>
-                  <td>{{ channel.host }}{{ channel.port ? `:${channel.port}` : '' }}</td>
-                  <td>{{ channel.pollIntervalMs }} ms</td>
-                  <td>{{ channel.pointCount }}</td>
-                  <td><span :class="['tag', channel.enabled ? 'ok' : 'idle']">{{ channel.enabled ? channel.status : '停用' }}</span></td>
-                  <td>{{ channel.lastPolledAt ? new Date(channel.lastPolledAt).toLocaleTimeString() : '未采集' }}</td>
-                  <td class="row-actions"><button class="ghost compact" type="button" @click="editCollectChannel(channel)">编辑</button><button class="ghost compact" type="button" @click="markCollectPolled(channel)">模拟心跳</button></td>
+                  <td>{{ channelModeText(channel.channelMode) }}<small>{{ channel.protocol }}</small></td>
+                  <td>{{ channel.host }}{{ channel.port ? `:${channel.port}` : '' }}<small>站号 {{ channel.slaveId }} · 超时 {{ channel.timeoutMs }}ms · 重试 {{ channel.retryCount }}</small></td>
+                  <td>{{ channel.pollIntervalMs }} ms<small>点位 {{ channel.pointCount }}</small></td>
+                  <td>{{ channel.lastLatencyMs == null ? '-' : `${channel.lastLatencyMs}ms` }}<small>{{ channel.lastError || `连续失败 ${channel.consecutiveFailures}` }}</small></td>
+                  <td><span :class="['tag', channel.enabled && channel.status !== 'DIAG_FAILED' ? 'ok' : channel.status === 'DIAG_FAILED' ? 'danger' : 'idle']">{{ channel.enabled ? channel.status : '停用' }}</span></td>
+                  <td>{{ channel.lastSuccessAt ? new Date(channel.lastSuccessAt).toLocaleTimeString() : channel.lastPolledAt ? new Date(channel.lastPolledAt).toLocaleTimeString() : '未成功' }}</td>
+                  <td class="row-actions"><button class="ghost compact" type="button" @click="editCollectChannel(channel)">编辑</button><button class="ghost compact" type="button" @click="testCollectConnection(channel)">测试连接</button><button class="ghost compact" type="button" @click="testCollectRead(channel)">测试读取</button></td>
                 </tr>
               </tbody>
             </table>
@@ -892,11 +920,12 @@ onUnmounted(() => {
         </section>
         <aside class="panel side-panel">
           <div class="panel-head"><h3>通道点位绑定</h3><span>{{ selectedCollectChannel?.name ?? '未选择' }}</span></div>
-          <p class="muted">当前阶段只维护采集配置和点位绑定，不启动真实 PLC 采集线程。</p>
+          <p class="muted">当前页面支持仿真/真实 Modbus TCP 通道诊断。真实 PLC 接入时，先改 IP 和端口，再用测试连接、测试读取逐点排查。</p>
+          <div v-if="collectDiagnosticResult" class="diagnostic-card"><strong>{{ collectDiagnosticResult.success ? '诊断成功' : '诊断失败' }}</strong><small>{{ collectDiagnosticResult.message }} · {{ collectDiagnosticResult.latencyMs }}ms</small><small v-if="collectDiagnosticResult.pointName">{{ collectDiagnosticResult.pointName }} / {{ collectDiagnosticResult.pointCode }} = {{ collectDiagnosticResult.rawValue || '-' }}</small></div>
           <div class="point-list collector-bindings">
             <article v-for="binding in collectBindings" :key="binding.id">
               <div><strong>{{ binding.pointName }}</strong><small>{{ binding.pointCode }} · {{ binding.modbusType || '未知区' }} · {{ binding.address || '-' }}</small></div>
-              <button class="ghost compact" type="button" @click="toggleCollectBinding(binding)">{{ binding.enabled ? '停用' : '启用' }}</button>
+              <div class="row-actions"><button class="ghost compact" type="button" @click="selectedCollectChannel && testCollectRead(selectedCollectChannel, binding)">读一次</button><button class="ghost compact" type="button" @click="toggleCollectBinding(binding)">{{ binding.enabled ? '停用' : '启用' }}</button></div>
             </article>
             <p v-if="!collectBindings.length" class="muted">选择采集通道后查看点位绑定。</p>
           </div>

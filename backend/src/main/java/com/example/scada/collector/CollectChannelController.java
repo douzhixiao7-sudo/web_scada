@@ -37,6 +37,18 @@ public class CollectChannelController {
         return collectChannelService.markPolled(id);
     }
 
+    @PostMapping("/channels/{id}/test-connection")
+    public CollectDiagnosticResponse testConnection(@PathVariable Long id) {
+        return collectChannelService.testConnection(id);
+    }
+
+    @PostMapping("/channels/{id}/test-read")
+    public CollectDiagnosticResponse testRead(
+            @PathVariable Long id,
+            @RequestParam(required = false) Long pointId) {
+        return collectChannelService.testRead(id, pointId);
+    }
+
     @GetMapping("/channels/{id}/bindings")
     public List<CollectBindingResponse> listBindings(@PathVariable Long id) {
         return collectChannelService.listBindings(id);

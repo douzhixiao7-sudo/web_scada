@@ -281,6 +281,14 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_history_quality(quality)
                 )
                 """);
+        addColumnIfMissing("scada_collect_channel", "channel_mode", "varchar(32) not null default 'SIMULATOR'");
+        addColumnIfMissing("scada_collect_channel", "slave_id", "int not null default 1");
+        addColumnIfMissing("scada_collect_channel", "timeout_ms", "int not null default 1200");
+        addColumnIfMissing("scada_collect_channel", "retry_count", "int not null default 1");
+        addColumnIfMissing("scada_collect_channel", "last_success_at", "timestamp null");
+        addColumnIfMissing("scada_collect_channel", "last_error", "varchar(255) not null default ''");
+        addColumnIfMissing("scada_collect_channel", "last_latency_ms", "int null");
+        addColumnIfMissing("scada_collect_channel", "consecutive_failures", "int not null default 0");
         addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
         addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");
