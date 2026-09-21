@@ -49,6 +49,8 @@ type AlarmRule = { id: number; pointId: number; pointCode: string; pointName: st
 type CollectChannel = { id: number; deviceId: number; deviceName: string; deviceCode: string; name: string; code: string; protocol: string; host: string; port: number | null; pollIntervalMs: number; enabled: boolean; status: string; pointCount: number; lastPolledAt: string | null }
 type CollectBinding = { id: number; channelId: number; pointId: number; pointCode: string; pointName: string; address: string; modbusType: string; accessMode: string; enabled: boolean }
 type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; targetValue: number; status: string; message: string; requestedBy: string; createdAt: string; executedAt?: string | null }
+type HistoryValue = { id: number; deviceId: number; pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
+type HistoryLatest = { pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 
 type DeviceForm = {
   areaId: number | null
@@ -110,6 +112,13 @@ const collectChannels = ref<CollectChannel[]>([])
 const collectBindings = ref<CollectBinding[]>([])
 const controlCommands = ref<ControlCommand[]>([])
 const controlLoading = ref(false)
+const historyPoints = ref<Point[]>([])
+const historyRows = ref<HistoryValue[]>([])
+const historyLatestRows = ref<HistoryLatest[]>([])
+const historyLoading = ref(false)
+const historyDeviceId = ref<number | null>(null)
+const historyPointId = ref<number | null>(null)
+const historyRangeHours = ref(1)
 const collectChannelLoading = ref(false)
 const selectedCollectChannelId = ref<number | null>(null)
 let monitorRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -146,6 +155,10 @@ const monitorPointCount = computed(() => points.value.length)
 const writablePointCount = computed(() => points.value.filter((point) => point.accessMode !== 'R').length)
 const selectedCollectChannel = computed(() => collectChannels.value.find((channel) => channel.id === selectedCollectChannelId.value) ?? collectChannels.value[0] ?? null)
 const enabledCollectChannelCount = computed(() => collectChannels.value.filter((channel) => channel.enabled).length)
+const historySelectedPoint = computed(() => historyPoints.value.find((point) => point.id === historyPointId.value) ?? null)
+const historyNumericRows = computed(() => historyRows.value.map((row) => ({ ...row, numericValue: Number(row.value) })).filter((row) => Number.isFinite(row.numericValue)))
+const historyMinValue = computed(() => historyNumericRows.value.length ? Math.min(...historyNumericRows.value.map((row) => row.numericValue)) : 0)
+const historyMaxValue = computed(() => historyNumericRows.value.length ? Math.max(...historyNumericRows.value.map((row) => row.numericValue)) : 0)
 
 const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
 
@@ -221,6 +234,8 @@ async function loadCurrentUser() {
     await loadAlarmRules()
     await loadCollectChannels()
     await loadControlCommands()
+    await initHistoryPage()
+    await initHistoryPage()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -500,6 +515,51 @@ async function sendControl(point: Point) {
   }
 }
 
+async function initHistoryPage() {
+  if (!historyDeviceId.value && devices.value.length) historyDeviceId.value = devices.value[0].id
+  await changeHistoryDevice(true)
+}
+
+async function handleHistoryDeviceChange() {
+  await changeHistoryDevice(true)
+}
+
+async function changeHistoryDevice(loadValues = true) {
+  if (!historyDeviceId.value) {
+    historyPoints.value = []
+    historyRows.value = []
+    historyLatestRows.value = []
+    return
+  }
+  historyPoints.value = await apiFetch<Point[]>(`/api/points?deviceId=${historyDeviceId.value}`)
+  if (!historyPointId.value || !historyPoints.value.some((point) => point.id === historyPointId.value)) {
+    historyPointId.value = historyPoints.value[0]?.id ?? null
+  }
+  historyLatestRows.value = await apiFetch<HistoryLatest[]>(`/api/history/latest?deviceId=${historyDeviceId.value}`)
+  if (loadValues) await loadHistoryValues()
+}
+
+async function loadHistoryValues() {
+  if (!historyPointId.value) return
+  historyLoading.value = true
+  try {
+    const end = new Date()
+    const start = new Date(end.getTime() - historyRangeHours.value * 60 * 60 * 1000)
+    const params = new URLSearchParams({ pointId: String(historyPointId.value), start: start.toISOString(), end: end.toISOString() })
+    historyRows.value = await apiFetch<HistoryValue[]>(`/api/history/values?${params}`)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function historyBarHeight(row: HistoryValue) {
+  const value = Number(row.value)
+  if (!Number.isFinite(value)) return 8
+  const spread = historyMaxValue.value - historyMinValue.value
+  if (spread <= 0) return 42
+  return 12 + ((value - historyMinValue.value) / spread) * 68
+}
+
 function startCreateDevice() {
   editingDeviceId.value = null
   deviceForm.value = emptyDeviceForm()
@@ -773,6 +833,32 @@ onUnmounted(() => {
           <div class="command-list"><article v-for="command in controlCommands" :key="command.id"><span :class="['tag', command.status === 'SUCCESS' ? 'ok' : command.status === 'FAILED' ? 'danger' : 'idle']">{{ command.status }}</span><div><strong>{{ command.pointName }} → {{ command.targetValue }}</strong><small>{{ command.message }} · {{ new Date(command.createdAt).toLocaleTimeString() }}</small></div></article><p v-if="!controlCommands.length && !controlLoading" class="muted">当前设备暂无控制命令。</p></div>
           <dl class="status-list contract-list"><dt>0 区</dt><dd>线圈，可写 0/1</dd><dt>1 区</dt><dd>离散输入，只读</dd><dt>3 区</dt><dd>输入寄存器，只读</dd><dt>4 区</dt><dd>保持寄存器，可写数值</dd></dl>
           <p class="muted">下发命令先写入命令表，再写 Modbus TCP 仿真器；实时采集继续从仿真器读取并刷新 Redis 当前值缓存。</p>
+        </aside>
+      </section>
+
+      <section v-else-if="activeMenu === 'history'" class="history-page">
+        <section class="panel page-panel">
+          <div class="panel-head"><h3>历史趋势 MVP</h3><span>{{ historyLoading ? '查询中' : `${historyRows.length} 条采样` }}</span></div>
+          <div class="toolbar alarm-toolbar">
+            <label><span>设备</span><select v-model.number="historyDeviceId" @change="handleHistoryDeviceChange"><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
+            <label><span>点位</span><select v-model.number="historyPointId" @change="loadHistoryValues"><option v-for="point in historyPoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label>
+            <label><span>时间</span><select v-model.number="historyRangeHours" @change="loadHistoryValues"><option :value="1">最近 1 小时</option><option :value="6">最近 6 小时</option><option :value="24">最近 24 小时</option></select></label>
+            <button class="ghost compact" type="button" @click="loadHistoryValues">刷新历史</button>
+          </div>
+          <div class="monitor-summary">
+            <article><span>当前点位</span><strong>{{ historySelectedPoint?.name ?? '未选择' }}</strong><small>{{ historySelectedPoint?.code ?? '-' }}</small></article>
+            <article><span>采样策略</span><strong>变化 + 降频</strong><small>数字量变化写，模拟量 30 秒</small></article>
+            <article><span>最小值</span><strong>{{ historyNumericRows.length ? historyMinValue.toFixed(2) : '-' }}</strong><small>当前查询范围</small></article>
+            <article><span>最大值</span><strong>{{ historyNumericRows.length ? historyMaxValue.toFixed(2) : '-' }}</strong><small>当前查询范围</small></article>
+          </div>
+          <div class="trend-line" v-if="historyRows.length"><span v-for="row in historyRows.slice(-80)" :key="row.id" :title="`${row.value} · ${new Date(row.collectedAt).toLocaleString()}`" :style="{ height: `${historyBarHeight(row)}px` }"></span></div>
+          <p v-else class="muted">暂无历史采样。采集器运行后，数字量变化或模拟量到达采样间隔会写入 MySQL。</p>
+          <div class="table-wrap"><table><thead><tr><th>时间</th><th>点位</th><th>值</th><th>质量</th></tr></thead><tbody><tr v-for="row in historyRows.slice(-30).reverse()" :key="row.id"><td>{{ new Date(row.collectedAt).toLocaleString() }}</td><td>{{ row.pointName }}<small>{{ row.pointCode }}</small></td><td>{{ row.value }}</td><td><span :class="['tag', row.quality === 'GOOD' ? 'ok' : 'danger']">{{ row.quality }}</span></td></tr></tbody></table></div>
+        </section>
+        <aside class="panel monitor-side">
+          <div class="panel-head"><h3>设备最新采样</h3><span>{{ historyLatestRows.length }} 点</span></div>
+          <div class="command-list"><article v-for="row in historyLatestRows.slice(0, 20)" :key="row.pointId"><span :class="['tag', row.quality === 'GOOD' ? 'ok' : 'danger']">{{ row.quality }}</span><div><strong>{{ row.pointName }} → {{ row.value }}</strong><small>{{ new Date(row.collectedAt).toLocaleTimeString() }}</small></div></article><p v-if="!historyLatestRows.length" class="muted">当前设备暂无历史采样。</p></div>
+          <p class="muted">当前没有引入时序库，历史数据先落 MySQL。后续数据量增加后，可把这层写入服务替换为 TDengine / TimescaleDB / InfluxDB。</p>
         </aside>
       </section>
 

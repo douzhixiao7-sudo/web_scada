@@ -265,6 +265,22 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_control_command_status(status)
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_history_value (
+                    id bigint primary key auto_increment,
+                    device_id bigint not null,
+                    point_id bigint not null,
+                    point_code varchar(64) not null,
+                    point_name varchar(128) not null,
+                    value varchar(64) not null,
+                    quality varchar(32) not null,
+                    collected_at timestamp not null,
+                    created_at timestamp not null default current_timestamp,
+                    index idx_scada_history_point_time(point_id, collected_at),
+                    index idx_scada_history_device_time(device_id, collected_at),
+                    index idx_scada_history_quality(quality)
+                )
+                """);
         addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
         addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");

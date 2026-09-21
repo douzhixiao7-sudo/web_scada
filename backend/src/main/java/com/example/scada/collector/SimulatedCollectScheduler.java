@@ -9,6 +9,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import com.example.scada.history.HistorySampleWriter;
+import com.example.scada.history.HistorySampleWriter.HistoryCandidate;
 import com.example.scada.realtime.RealtimeValueCache;
 import com.example.scada.realtime.RealtimeValueResponse;
 
@@ -17,11 +19,13 @@ public class SimulatedCollectScheduler {
     private final JdbcTemplate jdbcTemplate;
     private final RealtimeValueCache realtimeValueCache;
     private final ModbusTcpClient modbusTcpClient;
+    private final HistorySampleWriter historySampleWriter;
 
-    public SimulatedCollectScheduler(JdbcTemplate jdbcTemplate, RealtimeValueCache realtimeValueCache, ModbusTcpClient modbusTcpClient) {
+    public SimulatedCollectScheduler(JdbcTemplate jdbcTemplate, RealtimeValueCache realtimeValueCache, ModbusTcpClient modbusTcpClient, HistorySampleWriter historySampleWriter) {
         this.jdbcTemplate = jdbcTemplate;
         this.realtimeValueCache = realtimeValueCache;
         this.modbusTcpClient = modbusTcpClient;
+        this.historySampleWriter = historySampleWriter;
     }
 
     @Scheduled(fixedDelay = 1000, initialDelay = 1500)
@@ -54,6 +58,7 @@ public class SimulatedCollectScheduler {
         }
         Instant now = Instant.now();
         List<RealtimeValueResponse> values = new ArrayList<>(points.size());
+        List<HistoryCandidate> historyCandidates = new ArrayList<>(points.size());
         int fallbackCount = 0;
         for (BindingPoint point : points) {
             String value;
@@ -65,16 +70,19 @@ public class SimulatedCollectScheduler {
                 quality = quality(point, now);
                 fallbackCount++;
             }
-            values.add(new RealtimeValueResponse(
+            RealtimeValueResponse realtimeValue = new RealtimeValueResponse(
                     point.pointId(),
                     point.deviceId(),
                     point.code(),
                     value,
                     quality,
                     now
-            ));
+            );
+            values.add(realtimeValue);
+            historyCandidates.add(new HistoryCandidate(point.name(), point.dataType(), point.ioType(), realtimeValue));
         }
         realtimeValueCache.putAll(values);
+        historySampleWriter.writeSamples(historyCandidates);
         jdbcTemplate.update("""
                 update scada_collect_channel
                 set last_polled_at = ?, status = ?
