@@ -1067,22 +1067,20 @@ onUnmounted(() => {
 
       <section v-if="activeMenu === 'overview'" class="overview-page">
         <section class="overview-hero panel">
-          <div>
-            <p class="eyebrow">OPERATIONS OVERVIEW</p>
+          <div class="overview-hero-copy">
+            <span class="overview-state-label">运行态势</span>
             <h3>{{ overviewStateText }}</h3>
-            <p>首页汇总设备台账、Redis 实时缓存、采集通道、报警和控制命令，作为 MVP 的运行入口。</p>
           </div>
           <div class="overview-score" :class="overviewScore >= 90 ? 'ok' : overviewScore >= 70 ? 'warn' : 'danger'">
             <strong>{{ overviewScore }}</strong>
-            <span>运行评分</span>
+            <span>评分</span>
           </div>
         </section>
 
         <section class="content-grid overview-grid">
-          <article class="metric-card strong"><span>系统状态</span><strong>{{ overallStatus }}</strong><small>MySQL {{ dbStatus }} · Redis {{ redisStatus }}</small></article>
-          <article class="metric-card"><span>设备 / 点位</span><strong>{{ devices.length }} / {{ totalPointCount }}</strong><small>{{ onlineDeviceCount }} 台运行，{{ alarmDeviceCount }} 台告警</small></article>
+          <article class="metric-card"><span>设备 / 点位</span><strong>{{ devices.length }} / {{ totalPointCount }}</strong><small>{{ onlineDeviceCount }} 台运行</small></article>
           <article :class="['metric-card', activeAlarmCount ? 'warn' : '']"><span>当前报警</span><strong>{{ activeAlarmCount }}</strong><small>{{ unackedAlarmCount }} 条未确认</small></article>
-          <article :class="['metric-card', abnormalChannelCount ? 'warn' : '']"><span>采集通道</span><strong>{{ healthyChannelCount }} / {{ collectChannels.length }}</strong><small>{{ abnormalChannelCount }} 条需要关注</small></article>
+          <article :class="['metric-card', abnormalChannelCount ? 'warn' : '']"><span>采集通道</span><strong>{{ healthyChannelCount }} / {{ collectChannels.length }}</strong><small>{{ abnormalChannelCount ? `${abnormalChannelCount} 条异常` : '全部正常' }}</small></article>
         </section>
 
         <section class="overview-main">
@@ -1107,30 +1105,6 @@ onUnmounted(() => {
           </article>
         </section>
 
-        <section class="overview-main secondary">
-          <article class="panel">
-            <div class="panel-head"><h3>最近报警</h3><span>{{ activeAlarmCount }} 条活动</span></div>
-            <div class="alarm-list compact-list">
-              <article v-for="alarm in latestAlarms" :key="alarm.id">
-                <span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span>
-                <div><strong>{{ alarm.deviceName }} · {{ alarm.pointName }}</strong><small>{{ alarm.message }} · {{ new Date(alarm.lastSeenAt).toLocaleTimeString() }}</small></div>
-                <span :class="['tag', alarm.acknowledgedAt ? 'ok' : 'danger']">{{ alarm.acknowledgedAt ? '已确认' : '未确认' }}</span>
-              </article>
-              <p v-if="!latestAlarms.length" class="muted">当前没有活动报警。</p>
-            </div>
-          </article>
-
-          <article class="panel">
-            <div class="panel-head"><h3>最近控制</h3><span>{{ controlCommands.length }} 条命令</span></div>
-            <div class="command-list compact-list">
-              <article v-for="command in latestControlCommands" :key="command.id">
-                <span :class="['tag', command.status === 'SUCCESS' ? 'ok' : command.status === 'FAILED' ? 'danger' : 'idle']">{{ command.status }}</span>
-                <div><strong>{{ command.deviceName }} · {{ command.pointName }}</strong><small>目标值 {{ command.targetValue }} · {{ command.requestedBy }} · {{ new Date(command.createdAt).toLocaleTimeString() }}</small></div>
-              </article>
-              <p v-if="!latestControlCommands.length" class="muted">暂无控制命令。</p>
-            </div>
-          </article>
-        </section>
       </section>
 
       <section v-else-if="activeMenu === 'devices'" class="device-layout">
