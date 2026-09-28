@@ -88,20 +88,39 @@ public class AlarmService {
     }
 
     @Transactional
+    public AlarmRuleResponse createRule(AlarmRuleRequest request) {
+        validateRuleRequest(request, true);
+        PointRuleTarget point = loadRuleTarget(request.pointId());
+        jdbcTemplate.update("""
+                insert into scada_alarm_rule(point_id, point_code, point_name, rule_name, rule_type, operator, threshold_value, level, message, enabled)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, point.id(), point.code(), point.name(), clean(request.ruleName()), normalizeRuleType(request.ruleType()),
+                clean(request.operator()), request.thresholdValue(), clean(request.level()), clean(request.message()), Boolean.FALSE.equals(request.enabled()) ? 0 : 1);
+        Long id = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
+        return getRule(id);
+    }
+
+    @Transactional
     public AlarmRuleResponse updateRule(Long id, AlarmRuleRequest request) {
-        if (request == null || isBlank(request.ruleName()) || isBlank(request.level()) || isBlank(request.message())) {
-            throw new IllegalArgumentException("规则名称、等级和内容不能为空");
-        }
+        validateRuleRequest(request, false);
         int updated = jdbcTemplate.update("""
                 update scada_alarm_rule
-                set rule_name = ?, operator = ?, threshold_value = ?, level = ?, message = ?, enabled = ?
+                set rule_name = ?, rule_type = ?, operator = ?, threshold_value = ?, level = ?, message = ?, enabled = ?
                 where id = ?
-                """, clean(request.ruleName()), clean(request.operator()), request.thresholdValue(), clean(request.level()), clean(request.message()),
-                Boolean.FALSE.equals(request.enabled()) ? 0 : 1, id);
+                """, clean(request.ruleName()), normalizeRuleType(request.ruleType()), clean(request.operator()), request.thresholdValue(),
+                clean(request.level()), clean(request.message()), Boolean.FALSE.equals(request.enabled()) ? 0 : 1, id);
         if (updated == 0) {
             throw new IllegalArgumentException("报警规则不存在");
         }
         return getRule(id);
+    }
+
+    @Transactional
+    public void deleteRule(Long id) {
+        int deleted = jdbcTemplate.update("delete from scada_alarm_rule where id = ?", id);
+        if (deleted == 0) {
+            throw new IllegalArgumentException("报警规则不存在");
+        }
     }
 
     @Transactional
@@ -236,6 +255,41 @@ public class AlarmService {
         }
     }
 
+    private void validateRuleRequest(AlarmRuleRequest request, boolean requirePoint) {
+        if (request == null || isBlank(request.ruleName()) || isBlank(request.ruleType()) || isBlank(request.level()) || isBlank(request.message())) {
+            throw new IllegalArgumentException("规则名称、类型、等级和内容不能为空");
+        }
+        if (requirePoint && request.pointId() == null) {
+            throw new IllegalArgumentException("请选择点位");
+        }
+        String ruleType = normalizeRuleType(request.ruleType());
+        if (List.of("HIGH", "LOW", "EQUAL").contains(ruleType)) {
+            if (isBlank(request.operator()) || request.thresholdValue() == null) {
+                throw new IllegalArgumentException("阈值类规则必须填写操作符和阈值");
+            }
+        }
+    }
+
+    private PointRuleTarget loadRuleTarget(Long pointId) {
+        List<PointRuleTarget> points = jdbcTemplate.query("""
+                select id, code, name
+                from scada_point
+                where id = ?
+                """, (rs, rowNum) -> new PointRuleTarget(rs.getLong("id"), rs.getString("code"), rs.getString("name")), pointId);
+        if (points.isEmpty()) {
+            throw new IllegalArgumentException("点位不存在");
+        }
+        return points.getFirst();
+    }
+
+    private String normalizeRuleType(String ruleType) {
+        String normalized = clean(ruleType).toUpperCase(java.util.Locale.ROOT);
+        if (!List.of("QUALITY_BAD", "QUALITY_STALE", "EQUAL", "HIGH", "LOW").contains(normalized)) {
+            throw new IllegalArgumentException("报警规则类型不支持");
+        }
+        return normalized;
+    }
+
     private AlarmEventResponse getEvent(Long id) {
         List<AlarmEventResponse> events = jdbcTemplate.query("select * from scada_alarm_event where id = ?", (rs, rowNum) -> mapEvent(rs), id);
         if (events.isEmpty()) {
@@ -347,6 +401,9 @@ public class AlarmService {
     }
 
     private record AlarmRuleRow(Long id, String ruleName, String ruleType, String operator, Double thresholdValue, String level, String message) {
+    }
+
+    private record PointRuleTarget(Long id, String code, String name) {
     }
 
     private record ComputedAlarm(String alarmKey, Long deviceId, String deviceName, Long pointId, String pointCode, String pointName,

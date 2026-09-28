@@ -2,6 +2,7 @@ package com.example.scada.alarm;
 
 import java.util.List;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -38,9 +39,19 @@ public class AlarmController {
         return alarmService.listRules(deviceId, pointId, enabled);
     }
 
+    @PostMapping("/rules")
+    public AlarmRuleResponse createRule(@RequestBody AlarmRuleRequest request) {
+        return alarmService.createRule(request);
+    }
+
     @PutMapping("/rules/{id}")
     public AlarmRuleResponse updateRule(@PathVariable Long id, @RequestBody AlarmRuleRequest request) {
         return alarmService.updateRule(id, request);
+    }
+
+    @DeleteMapping("/rules/{id}")
+    public void deleteRule(@PathVariable Long id) {
+        alarmService.deleteRule(id);
     }
 
     @PostMapping("/events/{id}/ack")

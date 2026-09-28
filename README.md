@@ -87,7 +87,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 后端已提供报警闭环 MVP：`/api/alarms/active` 会按实时模拟值计算活动报警并同步写入 `scada_alarm_event`；`/api/alarms/events?status=...` 支持按状态查询；`POST /api/alarms/events/{id}/ack` 支持确认和备注；`/api/alarms/rules` 支持按设备、点位和启用状态查询报警规则；`PUT /api/alarms/rules/{id}` 支持维护规则名称、阈值、等级、内容和启停状态。首次启动会自动创建 `scada_alarm_rule`，并按现场点表生成质量异常、数据超时、故障信号、开度、电流、电压等默认规则。前端“报警中心”已支持状态筛选、确认备注和规则维护。
 
-当前报警规则维护仍是 MVP：支持查询、编辑和启停已有默认规则；新增规则、删除规则、恢复策略配置、历史高级筛选和报表尚未开发。
+当前报警规则维护仍是 MVP：支持查询、新增、编辑、删除和启停规则；恢复策略配置、历史高级筛选和报表尚未开发。
+
+## 报警规则新增 / 删除 MVP
+
+报警规则接口已支持完整维护闭环：`POST /api/alarms/rules` 新增规则，`PUT /api/alarms/rules/{id}` 编辑规则，`DELETE /api/alarms/rules/{id}` 删除规则。规则类型支持 `HIGH`、`LOW`、`EQUAL`、`QUALITY_BAD`、`QUALITY_STALE`。阈值类规则必须填写操作符和阈值，质量类规则不需要阈值。
+
+前端报警中心已提供新增规则表单，可选择设备下点位、规则类型、操作符、阈值、等级、报警内容和启停状态。
 
 ## 采集通道配置 MVP
 
@@ -139,5 +145,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。真实 Modbus 接入诊断和控制确认审计已准备好，下一阶段可进入报警规则新增/删除、历史保留策略或首页总览真实统计。
+TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。真实 Modbus 接入诊断和控制确认审计已准备好，下一阶段可进入历史保留策略、首页总览真实统计或页面体验收尾。
 
