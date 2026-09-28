@@ -131,6 +131,7 @@ const selectedCollectChannelId = ref<number | null>(null)
 const collectDiagnosticResult = ref<CollectDiagnostic | null>(null)
 let monitorRefreshTimer: ReturnType<typeof setInterval> | null = null
 let overviewRefreshTimer: ReturnType<typeof setInterval> | null = null
+let hmiRefreshTimer: ReturnType<typeof setInterval> | null = null
 const overviewRealtimeCount = ref(0)
 const overviewLastUpdated = ref('')
 const selectedDevice = ref<Device | null>(null)
@@ -144,6 +145,10 @@ const areaFilter = ref('')
 const statusFilter = ref('')
 const monitorAreaFilter = ref('')
 const monitorDeviceId = ref<number | null>(null)
+const hmiDeviceId = ref<number | null>(null)
+const hmiPoints = ref<Point[]>([])
+const hmiRealtimeValues = ref<Record<number, RealtimeValue>>({})
+const hmiLastUpdated = ref('')
 const deviceForm = ref<DeviceForm>(emptyDeviceForm())
 const pointForm = ref<PointForm>(emptyPointForm())
 
@@ -162,6 +167,15 @@ const pointAccessModeOptions = computed(() => dictItems('point_access_mode'))
 const pointUnitOptions = computed(() => dictItems('point_unit'))
 const monitorDevices = computed(() => devices.value.filter((device) => !monitorAreaFilter.value || String(device.areaId) === monitorAreaFilter.value))
 const monitorSelectedDevice = computed(() => devices.value.find((device) => device.id === monitorDeviceId.value) ?? monitorDevices.value[0] ?? null)
+const hmiDevices = computed(() => devices.value.slice(0, 12))
+const hmiSelectedDevice = computed(() => devices.value.find((device) => device.id === hmiDeviceId.value) ?? hmiDevices.value[0] ?? null)
+const hmiSelectedAlarms = computed(() => alarmRows.value.filter((alarm) => alarm.deviceId === hmiSelectedDevice.value?.id).slice(0, 5))
+const hmiKeyPoints = computed(() => {
+  const keywords = ['运行', '故障', '开度', '电流', '电压', '水位', '压力', '启动', '停止', '远程', '就地']
+  const matched = hmiPoints.value.filter((point) => keywords.some((keyword) => `${point.name}${point.code}${point.remark}`.includes(keyword)))
+  return (matched.length ? matched : hmiPoints.value).slice(0, 12)
+})
+const hmiGoodValueCount = computed(() => Object.values(hmiRealtimeValues.value).filter((value) => value.quality === 'GOOD').length)
 const monitorPointCount = computed(() => points.value.length)
 const writablePointCount = computed(() => points.value.filter((point) => point.accessMode !== 'R').length)
 const selectedCollectChannel = computed(() => collectChannels.value.find((channel) => channel.id === selectedCollectChannelId.value) ?? collectChannels.value[0] ?? null)
@@ -247,6 +261,69 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   return (await response.json()) as T
 }
 
+function handleMenuClick(key: string) {
+  activeMenu.value = key
+  if (key === 'hmi') void initHmiPage()
+}
+
+async function initHmiPage() {
+  if (!isAuthed.value) return
+  if (!devices.value.length) devices.value = await apiFetch<Device[]>('/api/devices')
+  if (!alarmRows.value.length) alarmRows.value = await apiFetch<AlarmEvent[]>('/api/alarms/active')
+  if (!hmiDeviceId.value) hmiDeviceId.value = devices.value[0]?.id ?? null
+  await refreshHmiValues()
+}
+
+async function selectHmiDevice(device: Device) {
+  hmiDeviceId.value = device.id
+  await refreshHmiValues()
+}
+
+async function refreshHmiValues() {
+  const device = hmiSelectedDevice.value
+  if (!device) {
+    hmiPoints.value = []
+    hmiRealtimeValues.value = {}
+    return
+  }
+  const [pointRows, valueRows, alarms] = await Promise.all([
+    apiFetch<Point[]>(`/api/points?deviceId=${device.id}`),
+    apiFetch<RealtimeValue[]>(`/api/realtime/values?deviceId=${device.id}`),
+    apiFetch<AlarmEvent[]>('/api/alarms/active'),
+  ])
+  hmiPoints.value = pointRows
+  hmiRealtimeValues.value = Object.fromEntries(valueRows.map((value) => [value.pointId, value]))
+  alarmRows.value = alarms
+  hmiLastUpdated.value = new Date().toLocaleTimeString()
+}
+
+function hmiValue(point: Point) {
+  return hmiRealtimeValues.value[point.id]
+}
+
+function hmiDeviceAlarmCount(device: Device) {
+  return alarmRows.value.filter((alarm) => alarm.deviceId === device.id && alarm.status === 'ACTIVE').length
+}
+
+function hmiDeviceState(device: Device) {
+  if (hmiDeviceAlarmCount(device)) return '报警'
+  if (device.status === '运行') return '运行'
+  return device.status || '未知'
+}
+
+function hmiDeviceClass(device: Device) {
+  const state = hmiDeviceState(device)
+  return state === '报警' || state === '告警' ? 'danger' : state === '运行' ? 'ok' : 'idle'
+}
+
+function hmiPointState(point: Point) {
+  const value = hmiValue(point)
+  if (!value) return '未采集'
+  if (value.quality !== 'GOOD') return value.quality
+  if (point.dataType === 'BOOLEAN') return value.value === '1' ? '闭合/有效' : '断开/无效'
+  return `${value.value}${point.unit ? ` ${point.unit}` : ''}`
+}
+
 async function loadOverviewData() {
   if (!isAuthed.value) return
   const tasks = await Promise.allSettled([
@@ -297,6 +374,7 @@ async function loadCurrentUser() {
     await loadControlCommands()
     await initHistoryPage()
     await loadOverviewData()
+    await initHmiPage()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -339,6 +417,7 @@ async function submitLogin() {
     await loadCollectChannels()
     await loadControlCommands()
     await loadOverviewData()
+    await initHmiPage()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -827,11 +906,15 @@ onMounted(async () => {
   overviewRefreshTimer = setInterval(() => {
     if (isAuthed.value && activeMenu.value === 'overview') loadOverviewData()
   }, 10000)
+  hmiRefreshTimer = setInterval(() => {
+    if (isAuthed.value && activeMenu.value === 'hmi') refreshHmiValues()
+  }, 5000)
 })
 
 onUnmounted(() => {
   if (monitorRefreshTimer) clearInterval(monitorRefreshTimer)
   if (overviewRefreshTimer) clearInterval(overviewRefreshTimer)
+  if (hmiRefreshTimer) clearInterval(hmiRefreshTimer)
 })
 </script>
 
@@ -861,7 +944,7 @@ onUnmounted(() => {
     <aside class="sidebar" aria-label="后台菜单">
       <div class="product-mark"><span class="mark-grid"></span><div><strong>Web SCADA</strong><small>{{ displayName }}</small></div></div>
       <nav>
-        <button v-for="item in menuItems" :key="item.key" :class="['nav-item', { active: activeMenu === item.key }]" type="button" @click="activeMenu = item.key">
+        <button v-for="item in menuItems" :key="item.key" :class="['nav-item', { active: activeMenu === item.key }]" type="button" @click="handleMenuClick(item.key)">
           <span class="nav-icon" aria-hidden="true">{{ item.icon }}</span><span><strong>{{ item.label }}</strong><small>{{ item.helper }}</small></span>
         </button>
       </nav>
@@ -1083,6 +1166,39 @@ onUnmounted(() => {
         </aside>
       </section>
 
+      <section v-else-if="activeMenu === 'hmi'" class="hmi-page">
+        <section class="hmi-canvas panel">
+          <div class="panel-head"><div><h3>金斗河固定版 HMI</h3><span>展示型组态 · Redis 当前值 · {{ hmiLastUpdated || '等待刷新' }}</span></div><button class="ghost compact" type="button" @click="refreshHmiValues">刷新画面</button></div>
+          <div class="hmi-process" aria-label="金斗河现场设备组态展示">
+            <div class="hmi-water"><span>金斗河现场工艺线</span></div>
+            <button v-for="(device, index) in hmiDevices" :key="device.id" type="button" :class="['hmi-node', hmiDeviceClass(device), { active: hmiSelectedDevice?.id === device.id }]" :style="{ '--x': `${12 + (index % 4) * 27}%`, '--y': `${18 + Math.floor(index / 4) * 27}%` }" @click="selectHmiDevice(device)">
+              <span class="hmi-node-icon">{{ device.type === 'PLC' ? 'PLC' : device.type === '闸门' ? 'Gate' : device.type === '水泵' ? 'Pump' : 'DEV' }}</span>
+              <strong>{{ device.name }}</strong>
+              <small>{{ device.areaName }} · {{ hmiDeviceState(device) }}</small>
+              <em v-if="hmiDeviceAlarmCount(device)">{{ hmiDeviceAlarmCount(device) }} 报警</em>
+            </button>
+          </div>
+          <div class="hmi-legend"><span><i class="ok"></i>运行</span><span><i class="idle"></i>待机/未知</span><span><i class="danger"></i>报警</span><span>当前值 {{ hmiGoodValueCount }}/{{ hmiPoints.length }}</span></div>
+        </section>
+
+        <aside class="panel hmi-detail">
+          <div class="panel-head"><h3>{{ hmiSelectedDevice?.name ?? '未选择设备' }}</h3><span>{{ hmiSelectedDevice?.code ?? '-' }}</span></div>
+          <dl class="status-list hmi-device-meta"><dt>区域</dt><dd>{{ hmiSelectedDevice?.areaName ?? '-' }}</dd><dt>协议</dt><dd>{{ hmiSelectedDevice?.protocol ?? '-' }}</dd><dt>地址</dt><dd>{{ hmiSelectedDevice?.ipAddress }}{{ hmiSelectedDevice?.port ? `:${hmiSelectedDevice.port}` : '' }}</dd><dt>点位</dt><dd>{{ hmiPoints.length }}</dd></dl>
+          <div class="hmi-alarm-strip" :class="hmiSelectedAlarms.length ? 'danger' : 'ok'">
+            <strong>{{ hmiSelectedAlarms.length ? '存在活动报警' : '无活动报警' }}</strong>
+            <small>{{ hmiSelectedAlarms.length ? hmiSelectedAlarms[0].message : '当前设备未触发活动报警' }}</small>
+          </div>
+          <div class="hmi-point-grid">
+            <article v-for="point in hmiKeyPoints" :key="point.id">
+              <span :class="['status-dot', hmiValue(point)?.quality === 'GOOD' ? 'is-ok' : 'is-warn']"></span>
+              <div><strong>{{ point.name }}</strong><small>{{ point.code }} · {{ modbusAreaText(point.modbusType) }}</small></div>
+              <b>{{ hmiPointState(point) }}</b>
+            </article>
+            <p v-if="!hmiKeyPoints.length" class="muted">当前设备暂无点位数据。</p>
+          </div>
+        </aside>
+      </section>
+
       <section v-else-if="activeMenu === 'alarms'" class="alarm-page"><section class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section><section class="panel page-panel"><div class="panel-head"><h3>报警规则维护</h3><span>{{ alarmRuleLoading ? '加载中' : `规则 ${alarmRules.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>设备</span><select v-model.number="alarmRuleDeviceId" @change="loadAlarmRules"><option :value="null">全部设备</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label><button class="ghost compact" type="button" @click="loadAlarmRules">刷新规则</button></div><form class="alarm-rule-form" @submit.prevent="createAlarmRule"><label><span>点位</span><select v-model.number="alarmRuleForm.pointId"><option v-for="point in alarmRulePoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label><label><span>规则名称</span><input v-model="alarmRuleForm.ruleName" /></label><label><span>类型</span><select v-model="alarmRuleForm.ruleType"><option v-for="item in alarmRuleTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label><span>操作符</span><select v-model="alarmRuleForm.operator"><option value=">">大于</option><option value="<">小于</option><option value="=">等于</option></select></label><label><span>阈值</span><input v-model.number="alarmRuleForm.thresholdValue" type="number" step="0.0001" /></label><label><span>等级</span><select v-model="alarmRuleForm.level"><option v-for="level in alarmLevelOptions" :key="level" :value="level">{{ level }}</option></select></label><label class="span-2"><span>报警内容</span><input v-model="alarmRuleForm.message" /></label><label><span>启用</span><select v-model="alarmRuleForm.enabled"><option :value="true">启用</option><option :value="false">停用</option></select></label><button class="primary compact" type="submit">新增规则</button></form><div class="table-wrap"><table><thead><tr><th>点位</th><th>规则</th><th>类型</th><th>阈值</th><th>等级</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="rule in alarmRules" :key="rule.id"><td>{{ rule.pointName }}<small>{{ rule.pointCode }}</small></td><td>{{ rule.ruleName }}<small>{{ rule.message }}</small></td><td>{{ ruleTypeText(rule.ruleType) }}</td><td>{{ rule.thresholdValue ?? '-' }}</td><td>{{ rule.level }}</td><td><span :class="['tag', rule.enabled ? 'ok' : 'idle']">{{ rule.enabled ? '启用' : '停用' }}</span></td><td class="row-actions"><button class="ghost compact" type="button" @click="editAlarmRule(rule)">编辑</button><button class="ghost compact" type="button" @click="deleteAlarmRule(rule)">删除</button></td></tr></tbody></table></div></section></section>
 
 
@@ -1129,3 +1245,4 @@ onUnmounted(() => {
     </section>
   </main>
 </template>
+

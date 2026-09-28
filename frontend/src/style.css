@@ -483,3 +483,176 @@ tr.selected { background: rgba(65,199,185,.07); }
   .overview-score { justify-self: start; width: 118px; height: 118px; }
   .overview-score strong { font-size: 36px; }
 }
+
+.hmi-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+.hmi-canvas {
+  min-height: 640px;
+  overflow: hidden;
+}
+.hmi-process {
+  position: relative;
+  min-height: 500px;
+  border: 1px solid var(--border);
+  background:
+    linear-gradient(90deg, rgba(65,199,185,.05) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(65,199,185,.045) 1px, transparent 1px),
+    radial-gradient(circle at 20% 28%, rgba(65,199,185,.11), transparent 24%),
+    radial-gradient(circle at 76% 64%, rgba(117,167,255,.09), transparent 26%),
+    var(--surface-sunken);
+  background-size: 36px 36px, 36px 36px, auto, auto, auto;
+}
+.hmi-water {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 44%;
+  height: 76px;
+  border: 1px solid rgba(117,167,255,.34);
+  background: linear-gradient(90deg, rgba(117,167,255,.08), rgba(65,199,185,.18), rgba(117,167,255,.08));
+  box-shadow: inset 0 0 40px rgba(65,199,185,.1);
+}
+.hmi-water::before,
+.hmi-water::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  height: 1px;
+  background: rgba(125,226,215,.35);
+}
+.hmi-water::before { top: 24px; }
+.hmi-water::after { bottom: 22px; }
+.hmi-water span {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: .12em;
+}
+.hmi-node {
+  position: absolute;
+  left: var(--x);
+  top: var(--y);
+  width: 188px;
+  min-height: 104px;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  color: var(--text);
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.018)), #0d171d;
+  box-shadow: 0 16px 36px rgba(0,0,0,.2);
+}
+.hmi-node:hover,
+.hmi-node.active {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, rgba(65,199,185,.12), rgba(255,255,255,.018)), #0d171d;
+}
+.hmi-node.ok { border-left: 4px solid var(--success); }
+.hmi-node.idle { border-left: 4px solid var(--info); }
+.hmi-node.danger { border-left: 4px solid var(--danger); }
+.hmi-node-icon {
+  width: fit-content;
+  min-height: 22px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent-strong);
+  border: 1px solid rgba(65,199,185,.36);
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+.hmi-node strong { font-size: 15px; }
+.hmi-node small { color: var(--muted); }
+.hmi-node em {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  color: var(--danger);
+  font-style: normal;
+  font-size: 12px;
+}
+.hmi-legend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  padding-top: 14px;
+}
+.hmi-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.hmi-legend i {
+  width: 10px;
+  height: 10px;
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.hmi-legend i.ok { background: var(--success); }
+.hmi-legend i.idle { background: var(--info); }
+.hmi-legend i.danger { background: var(--danger); }
+.hmi-detail {
+  min-height: 640px;
+}
+.hmi-device-meta {
+  margin-bottom: 16px;
+}
+.hmi-alarm-strip {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(91,215,143,.38);
+  background: rgba(91,215,143,.07);
+}
+.hmi-alarm-strip.danger {
+  border-color: rgba(239,107,107,.5);
+  background: rgba(239,107,107,.08);
+}
+.hmi-alarm-strip small {
+  color: var(--muted);
+}
+.hmi-point-grid {
+  display: grid;
+  gap: 10px;
+}
+.hmi-point-grid article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.025);
+}
+.hmi-point-grid small {
+  display: block;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.hmi-point-grid b {
+  font-size: 13px;
+  color: var(--accent-strong);
+  white-space: nowrap;
+}
+@media (max-width: 1280px) {
+  .hmi-page { grid-template-columns: 1fr; }
+  .hmi-detail { min-height: auto; }
+}
+@media (max-width: 760px) {
+  .hmi-process { min-height: auto; display: grid; gap: 10px; padding: 12px; }
+  .hmi-water { position: relative; left: auto; right: auto; top: auto; height: 58px; }
+  .hmi-node { position: relative; left: auto; top: auto; width: 100%; transform: none; }
+}

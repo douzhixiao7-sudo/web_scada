@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、首页真实运行总览、实时监控页面、报警闭环、报警规则维护、控制下发保护审计和低频历史采样 MVP。当前没有接入真实 PLC 或组态编辑器。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、首页真实运行总览、实时监控页面、报警闭环、报警规则维护、控制下发保护审计、低频历史采样和固定版 HMI 展示页。当前没有接入真实 PLC 或拖拉拽组态编辑器。
 
 ## 本机位置
 
@@ -134,6 +134,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 后续数据量增加后，可以把历史写入服务替换为 TDengine、TimescaleDB 或 InfluxDB，实时值 Redis 链路不需要改变。
 
+
+## 固定版 HMI 展示页
+
+“组态画面”菜单已提供固定版 HMI 展示页。页面用现场工艺线和设备节点展示金斗河设备运行态势，点击设备后可查看区域、协议、通讯地址、活动报警和关键点位实时值。数据来源复用设备台账、点位台账、Redis 当前值和活动报警接口。当前是展示型 HMI，不包含拖拉拽编辑器。
 ## 工程结构
 
 ```text
@@ -148,4 +152,6 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报表与 HMI 编辑器均未开发。真实 Modbus 接入诊断、控制确认审计和首页真实总览已准备好，下一阶段可进入固定版 HMI 展示页。
+TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报表与 HMI 拖拉拽编辑器均未开发。真实 Modbus 接入诊断、控制确认审计、首页真实总览和固定版 HMI 展示页已准备好，下一阶段可进入 MVP 收尾验收。
+
+
