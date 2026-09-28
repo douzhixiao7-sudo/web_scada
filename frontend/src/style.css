@@ -135,8 +135,8 @@ input {
 .mark-grid span { width: 14px; height: 14px; border: 1px solid currentColor; color: var(--sidebar-active); box-shadow: inset 0 0 0 3px #0e1a20; }
 .sidebar-toggle {
   position: absolute;
-  right: -14px;
-  top: 50%;
+  right: -17px;
+  top: 44%;
   z-index: 2;
   width: 28px;
   height: 56px;
@@ -716,4 +716,107 @@ tr.selected { background: rgba(65,199,185,.07); }
   .hmi-process { min-height: auto; display: grid; gap: 10px; padding: 12px; }
   .hmi-water { position: relative; left: auto; right: auto; top: auto; height: 58px; }
   .hmi-node { position: relative; left: auto; top: auto; width: 100%; transform: none; }
+}
+
+
+/* Overview polish: restrained industrial operations console */
+.overview-page {
+  gap: 14px;
+}
+.overview-page .panel,
+.overview-page .metric-card {
+  box-shadow: none;
+}
+.overview-hero {
+  min-height: 136px;
+  grid-template-columns: minmax(0, 1fr) 128px;
+  border-color: rgba(67, 96, 106, .82);
+  background:
+    linear-gradient(90deg, rgba(65,199,185,.055), transparent 38%),
+    var(--surface);
+}
+.overview-hero .eyebrow {
+  margin-bottom: 8px;
+  color: var(--muted);
+  letter-spacing: .16em;
+}
+.overview-hero h3 {
+  font-size: clamp(30px, 3vw, 40px);
+  margin-bottom: 10px;
+  letter-spacing: .02em;
+}
+.overview-score {
+  width: 112px;
+  height: 112px;
+  border-radius: 0;
+  background: rgba(9,17,22,.36);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.025);
+}
+.overview-score strong {
+  font-size: 40px;
+}
+.overview-grid {
+  gap: 14px;
+}
+.overview-page .metric-card {
+  min-height: 112px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border-color: rgba(67, 96, 106, .76);
+}
+.overview-page .metric-card.strong {
+  border-color: rgba(107,215,204,.42);
+}
+.overview-page .metric-card.warn {
+  border-color: rgba(232,184,93,.48);
+}
+.overview-page .metric-card span {
+  font-size: 13px;
+  letter-spacing: .02em;
+}
+.overview-page .metric-card strong {
+  font-size: 30px;
+  letter-spacing: .02em;
+}
+.overview-main {
+  gap: 14px;
+}
+.overview-trend-panel .trend {
+  height: 220px;
+  gap: 8px;
+  padding: 16px 0 0;
+}
+.overview-trend-panel .trend span {
+  background: linear-gradient(180deg, rgba(107,215,204,.82), rgba(65,199,185,.18));
+  border-color: rgba(107,215,204,.24);
+}
+.overview-kpi-row {
+  padding-top: 12px;
+  font-size: 13px;
+}
+.overview-status-list {
+  gap: 14px;
+}
+.overview-status-list dt {
+  font-size: 13px;
+}
+.overview-status-list dd {
+  letter-spacing: .04em;
+}
+.overview-main.secondary .panel {
+  min-height: 184px;
+}
+.overview-page .compact-list article {
+  min-height: 58px;
+  padding: 12px;
+  background: rgba(255,255,255,.018);
+  border-color: rgba(67,96,106,.7);
+}
+.overview-page .panel-head {
+  margin-bottom: 14px;
+}
+@media (max-width: 640px) {
+  .overview-hero { grid-template-columns: 1fr; }
+  .overview-score { width: 96px; height: 96px; }
+  .overview-score strong { font-size: 32px; }
 }
