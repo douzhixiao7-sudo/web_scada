@@ -272,7 +272,10 @@ onBeforeUnmount(() => { if (dirty.value) save(); window.removeEventListener('bef
               <button v-else-if="item.kind === 'button'" disabled>{{ item.label }}</button>
               <span v-else>{{ item.label }}</span>
             </div>
-            <Selecto v-if="!preview && stage" ref="selector" :drag-container="stage" :selectable-targets="['.editor-stage .editor-item']" :hit-rate="0" :select-by-click="true" :select-from-inside="false" @drag-start="startSelection" @select="selectedElements" />
+            <!-- Viewport-positioned marquee must not inherit the canvas transform. -->
+            <Teleport to="body">
+              <Selecto v-if="!preview && stage" ref="selector" :drag-container="stage" :selectable-targets="['.editor-stage .editor-item']" :hit-rate="0" :select-by-click="true" :select-from-inside="false" @drag-start="startSelection" @select="selectedElements" />
+            </Teleport>
             <Moveable v-if="!preview && targets.length" ref="moveable" :target="targets.length === 1 ? targets[0] : targets" :draggable="true" :pass-drag-area="true" :resizable="targets.length === 1" :snappable="true" :snap-grid-width="8" :snap-grid-height="8" :origin="false" @drag-start="beginDrag" @drag="drag" @drag-group-start="beginGroupDrag" @drag-group="dragGroup" @resize-start="beginResize" @resize="resize" />
           </div>
         </div>
