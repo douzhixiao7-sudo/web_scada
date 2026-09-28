@@ -1,6 +1,6 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、实时监控页面、报警闭环和报警规则维护 MVP。当前没有接入真实 PLC、控制下发、历史数据或组态业务。
+当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、首页真实运行总览、实时监控页面、报警闭环、报警规则维护、控制下发保护审计和低频历史采样 MVP。当前没有接入真实 PLC 或组态编辑器。
 
 ## 本机位置
 
@@ -63,13 +63,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 后端已提供基础字典表 `sys_dict_type`、`sys_dict_item`，接口为 `/api/dictionaries`、`/api/dictionaries/{typeCode}/items`、`/api/dictionaries/items?typeCodes=...`。当前已维护：设备状态、通讯协议、设备类型、点位数据类型、点位读写属性、点位单位。设备与点位表单下拉项来自字典接口，不再写死在页面里。
 
-## 实时监控静态框架
 
-前端已提供“实时监控”页面的 MVP 静态框架。页面基于现有设备与点位台账展示设备状态、协议、点位清单和实时数据接入契约，占位字段包括 `pointId`、`value`、`quality`、`collectedAt`。当前页面只读取 `/api/devices` 与 `/api/points?deviceId=...`，实时值显示为“待接入 / 未采集 / 等待实时接口”。
+## 首页总览 MVP
 
-本阶段没有新增 PLC 仿真、采集调度、实时数据表或 WebSocket 推送；这些会在后续实时数据阶段单独设计和实现。
+首页总览已经从静态展示升级为运行态势入口。页面会汇总设备台账、点位数量、活动报警、未确认报警、采集通道状态、最近控制命令和 Redis 当前值缓存数量，并展示运行评分、实时数据覆盖率和链路健康状态。首页停留时会周期刷新，便于开发期快速判断系统是否跑通。
 
+## 实时监控 MVP
 
+前端“实时监控”页面已经接入 Redis 当前值。页面基于现有设备与点位台账展示设备状态、协议、现场来源、Modbus 地址、读写属性、当前值、质量和采集时间，并在页面停留时每 3 秒自动刷新。
+
+实时值来自 `Modbus TCP 仿真 PLC -> Java Modbus 采集 -> Redis 当前值` 主链路；当前阶段没有接入真实 PLC，也不通过数据库保存实时当前值。
 
 ## Modbus TCP 仿真 PLC MVP
 
@@ -145,5 +148,4 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。真实 Modbus 接入诊断和控制确认审计已准备好，下一阶段可进入历史保留策略、首页总览真实统计或页面体验收尾。
-
+TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报表与 HMI 编辑器均未开发。真实 Modbus 接入诊断、控制确认审计和首页真实总览已准备好，下一阶段可进入固定版 HMI 展示页。

@@ -384,3 +384,102 @@ tr.selected { background: rgba(65,199,185,.07); }
 @media (max-width: 640px) {
   .alarm-rule-form, .alarm-rule-form .span-2 { grid-template-columns: 1fr; grid-column: span 1; }
 }
+
+.overview-page {
+  display: grid;
+  gap: 16px;
+}
+.overview-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 20px;
+  align-items: center;
+  min-height: 160px;
+  background:
+    linear-gradient(135deg, rgba(65,199,185,.12), transparent 42%),
+    linear-gradient(90deg, rgba(255,255,255,.035), rgba(255,255,255,.012)),
+    var(--surface);
+}
+.overview-hero h3 {
+  font-size: clamp(28px, 4vw, 46px);
+  line-height: 1;
+  margin: 0 0 14px;
+}
+.overview-hero p:last-child {
+  color: var(--muted);
+  max-width: 680px;
+  margin-bottom: 0;
+}
+.overview-score {
+  width: 142px;
+  height: 142px;
+  justify-self: end;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.07), rgba(255,255,255,.015) 62%, transparent 64%);
+}
+.overview-score strong {
+  font-size: 46px;
+  line-height: 1;
+}
+.overview-score span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.overview-score.ok { color: var(--success); border-color: rgba(91,215,143,.48); }
+.overview-score.warn { color: var(--warning); border-color: rgba(232,184,93,.58); }
+.overview-score.danger { color: var(--danger); border-color: rgba(239,107,107,.6); }
+.overview-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, .8fr);
+  gap: 16px;
+}
+.overview-main.secondary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.overview-trend-panel .trend {
+  height: 260px;
+}
+.overview-kpi-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  color: var(--muted);
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.overview-status-list {
+  grid-template-columns: 1fr auto;
+  align-content: start;
+}
+.overview-status-list dd.state-ok { color: var(--success); }
+.overview-status-list dd.state-warn { color: var(--warning); }
+.compact-list article {
+  min-height: 64px;
+}
+.command-list.compact-list article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  background: rgba(255,255,255,.025);
+  border: 1px solid var(--border);
+}
+.command-list.compact-list small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+@media (max-width: 1100px) {
+  .overview-main, .overview-main.secondary { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .overview-hero { grid-template-columns: 1fr; }
+  .overview-score { justify-self: start; width: 118px; height: 118px; }
+  .overview-score strong { font-size: 36px; }
+}

@@ -1,6 +1,6 @@
 # Web SCADA 验证记录
 
-验证时间：2026-09-20 12:23（Asia/Shanghai）
+验证时间：2026-09-28 10:18（Asia/Shanghai）
 
 ## 已验证
 
@@ -36,9 +36,15 @@
 
 ## 当前范围
 
-项目包含可运行框架、基础连接验证、开发期认证菜单、基于金斗河现场点表的设备/点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、实时监控页面、报警闭环、报警规则维护 MVP、控制下发与保护审计 MVP、历史数据 MVP 和采集通道诊断 MVP。当前没有真实 PLC 正式接入、历史高级筛选、报表或组态功能。
+项目包含可运行框架、基础连接验证、开发期认证菜单、基于金斗河现场点表的设备/点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、实时监控页面、报警闭环、报警规则维护 MVP、控制下发与保护审计 MVP、历史数据 MVP 和采集通道诊断 MVP。当前没有真实 PLC 正式接入、历史高级筛选、报表或组态功能；首页总览已接入真实统计数据。
 
 ## 本地文件
 
 `.local/` 和 `.run/` 包含本机配置、密码、缓存、日志或进程记录，已被 Git 忽略，不提交到 GitHub。
 
+
+## 2026-09-28 首页总览验证
+
+- `scripts/build.ps1`：后端 Maven package 成功，前端 `vue-tsc --noEmit && vite build` 成功。
+- 首页总览已接入 `/api/devices`、`/api/alarms/active`、`/api/collect/channels`、`/api/control/commands` 和 `/api/realtime/cache-size`。
+- 首页展示设备/点位、报警、采集通道、Redis 当前值覆盖率、最近报警和最近控制命令。

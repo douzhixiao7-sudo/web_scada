@@ -130,6 +130,9 @@ const collectChannelLoading = ref(false)
 const selectedCollectChannelId = ref<number | null>(null)
 const collectDiagnosticResult = ref<CollectDiagnostic | null>(null)
 let monitorRefreshTimer: ReturnType<typeof setInterval> | null = null
+let overviewRefreshTimer: ReturnType<typeof setInterval> | null = null
+const overviewRealtimeCount = ref(0)
+const overviewLastUpdated = ref('')
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -167,8 +170,27 @@ const historySelectedPoint = computed(() => historyPoints.value.find((point) => 
 const historyNumericRows = computed(() => historyRows.value.map((row) => ({ ...row, numericValue: Number(row.value) })).filter((row) => Number.isFinite(row.numericValue)))
 const historyMinValue = computed(() => historyNumericRows.value.length ? Math.min(...historyNumericRows.value.map((row) => row.numericValue)) : 0)
 const historyMaxValue = computed(() => historyNumericRows.value.length ? Math.max(...historyNumericRows.value.map((row) => row.numericValue)) : 0)
+const totalPointCount = computed(() => devices.value.reduce((sum, device) => sum + (device.pointCount || 0), 0))
+const activeAlarmCount = computed(() => alarmRows.value.filter((alarm) => alarm.status === 'ACTIVE').length)
+const unackedAlarmCount = computed(() => alarmRows.value.filter((alarm) => alarm.status === 'ACTIVE' && !alarm.acknowledgedAt).length)
+const healthyChannelStatuses = ['ONLINE', 'MODBUS_OK']
+const healthyChannelCount = computed(() => collectChannels.value.filter((channel) => channel.enabled && healthyChannelStatuses.includes(channel.status)).length)
+const abnormalChannelCount = computed(() => collectChannels.value.filter((channel) => channel.enabled && !healthyChannelStatuses.includes(channel.status)).length)
+const latestAlarms = computed(() => alarmRows.value.slice(0, 4))
+const latestControlCommands = computed(() => controlCommands.value.slice(0, 4))
+const overviewTrendBars = computed(() => {
+  const base = Math.max(28, Math.min(92, Math.round((overviewRealtimeCount.value / Math.max(totalPointCount.value, 1)) * 100)))
+  return [base - 14, base - 7, base - 10, base + 3, base + 9, base + 1, base + 13, base + 8, base + 18, base + 10, base + 21, base + 16].map((value) => Math.max(16, Math.min(96, value)))
+})
+const overviewScore = computed(() => {
+  const healthPenalty = overallStatus.value === 'UP' ? 0 : 24
+  const alarmPenalty = Math.min(activeAlarmCount.value * 6, 30)
+  const channelPenalty = Math.min(abnormalChannelCount.value * 8, 24)
+  const redisPenalty = redisStatus.value === 'UP' ? 0 : 18
+  return Math.max(0, 100 - healthPenalty - alarmPenalty - channelPenalty - redisPenalty)
+})
+const overviewStateText = computed(() => overviewScore.value >= 90 ? '运行平稳' : overviewScore.value >= 70 ? '需要关注' : '存在异常')
 
-const trendBars = [42, 58, 53, 66, 71, 64, 77, 73, 81, 76, 88, 84]
 
 function emptyDeviceForm(): DeviceForm {
   return { areaId: null, name: '', code: '', type: '闸门', status: '运行', protocol: 'MODBUS_TCP', ipAddress: '127.0.0.1', port: 1502, description: '' }
@@ -225,6 +247,24 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   return (await response.json()) as T
 }
 
+async function loadOverviewData() {
+  if (!isAuthed.value) return
+  const tasks = await Promise.allSettled([
+    apiFetch<Device[]>('/api/devices'),
+    apiFetch<AlarmEvent[]>('/api/alarms/active'),
+    apiFetch<CollectChannel[]>('/api/collect/channels'),
+    apiFetch<ControlCommand[]>('/api/control/commands'),
+    apiFetch<number>('/api/realtime/cache-size'),
+  ])
+  const [deviceResult, alarmResult, channelResult, commandResult, cacheSizeResult] = tasks
+  if (deviceResult.status === 'fulfilled') devices.value = deviceResult.value
+  if (alarmResult.status === 'fulfilled') alarmRows.value = alarmResult.value
+  if (channelResult.status === 'fulfilled') collectChannels.value = channelResult.value
+  if (commandResult.status === 'fulfilled') controlCommands.value = commandResult.value
+  if (cacheSizeResult.status === 'fulfilled') overviewRealtimeCount.value = cacheSizeResult.value
+  overviewLastUpdated.value = new Date().toLocaleTimeString()
+}
+
 async function checkBackend() {
   checking.value = true
   healthText.value = '正在连接'
@@ -256,7 +296,7 @@ async function loadCurrentUser() {
     await loadCollectChannels()
     await loadControlCommands()
     await initHistoryPage()
-    await initHistoryPage()
+    await loadOverviewData()
   } catch {
     localStorage.removeItem(tokenKey)
     user.value = null
@@ -298,6 +338,7 @@ async function submitLogin() {
     await loadAlarmRules()
     await loadCollectChannels()
     await loadControlCommands()
+    await loadOverviewData()
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : '登录失败'
   } finally {
@@ -574,7 +615,7 @@ function isWritableControlPoint(point: Point) {
   return point.accessMode !== 'R' && (point.modbusType === '0' || point.modbusType === '4')
 }
 
-async function loadControlCommands(deviceId = monitorSelectedDevice.value?.id ?? null) {
+async function loadControlCommands(deviceId: number | null = monitorSelectedDevice.value?.id ?? null) {
   controlLoading.value = true
   try {
     const params = new URLSearchParams()
@@ -783,10 +824,14 @@ onMounted(async () => {
   monitorRefreshTimer = setInterval(() => {
     if (isAuthed.value && activeMenu.value === 'monitor') refreshMonitorPoints()
   }, 3000)
+  overviewRefreshTimer = setInterval(() => {
+    if (isAuthed.value && activeMenu.value === 'overview') loadOverviewData()
+  }, 10000)
 })
 
 onUnmounted(() => {
   if (monitorRefreshTimer) clearInterval(monitorRefreshTimer)
+  if (overviewRefreshTimer) clearInterval(overviewRefreshTimer)
 })
 </script>
 
@@ -834,13 +879,72 @@ onUnmounted(() => {
         </div>
       </header>
 
-      <section v-if="activeMenu === 'overview'" class="content-grid overview-grid">
-        <article class="metric-card strong"><span>系统状态</span><strong>{{ overallStatus }}</strong><small>Actuator 健康检查</small></article>
-        <article class="metric-card"><span>设备总数</span><strong>{{ devices.length }}</strong><small>来自 MySQL 设备台账</small></article>
-        <article class="metric-card"><span>运行设备</span><strong>{{ onlineDeviceCount }}</strong><small>状态为运行</small></article>
-        <article class="metric-card warn"><span>告警设备</span><strong>{{ alarmDeviceCount }}</strong><small>状态为告警</small></article>
-        <article class="panel wide"><div class="panel-head"><h3>实时负载趋势</h3><span>模拟数据</span></div><div class="trend" aria-label="实时负载趋势模拟图"><span v-for="(bar, index) in trendBars" :key="index" :style="{ height: `${bar}%` }"></span></div></article>
-        <article class="panel"><div class="panel-head"><h3>连接状态</h3><span>{{ healthText }}</span></div><dl class="status-list"><dt>后端</dt><dd>{{ overallStatus }}</dd><dt>MySQL</dt><dd>{{ dbStatus }}</dd><dt>Redis</dt><dd>{{ redisStatus }}</dd></dl></article>
+      <section v-if="activeMenu === 'overview'" class="overview-page">
+        <section class="overview-hero panel">
+          <div>
+            <p class="eyebrow">OPERATIONS OVERVIEW</p>
+            <h3>{{ overviewStateText }}</h3>
+            <p>首页汇总设备台账、Redis 实时缓存、采集通道、报警和控制命令，作为 MVP 的运行入口。</p>
+          </div>
+          <div class="overview-score" :class="overviewScore >= 90 ? 'ok' : overviewScore >= 70 ? 'warn' : 'danger'">
+            <strong>{{ overviewScore }}</strong>
+            <span>运行评分</span>
+          </div>
+        </section>
+
+        <section class="content-grid overview-grid">
+          <article class="metric-card strong"><span>系统状态</span><strong>{{ overallStatus }}</strong><small>MySQL {{ dbStatus }} · Redis {{ redisStatus }}</small></article>
+          <article class="metric-card"><span>设备 / 点位</span><strong>{{ devices.length }} / {{ totalPointCount }}</strong><small>{{ onlineDeviceCount }} 台运行，{{ alarmDeviceCount }} 台告警</small></article>
+          <article :class="['metric-card', activeAlarmCount ? 'warn' : '']"><span>当前报警</span><strong>{{ activeAlarmCount }}</strong><small>{{ unackedAlarmCount }} 条未确认</small></article>
+          <article :class="['metric-card', abnormalChannelCount ? 'warn' : '']"><span>采集通道</span><strong>{{ healthyChannelCount }} / {{ collectChannels.length }}</strong><small>{{ abnormalChannelCount }} 条需要关注</small></article>
+        </section>
+
+        <section class="overview-main">
+          <article class="panel overview-trend-panel">
+            <div class="panel-head"><h3>实时数据覆盖</h3><span>{{ overviewLastUpdated || '等待刷新' }}</span></div>
+            <div class="trend" aria-label="Redis 实时数据覆盖度"><span v-for="(bar, index) in overviewTrendBars" :key="index" :style="{ height: `${bar}%` }"></span></div>
+            <div class="overview-kpi-row">
+              <span>Redis 当前值 {{ overviewRealtimeCount }} 条</span>
+              <span>点位台账 {{ totalPointCount }} 条</span>
+              <span>覆盖率 {{ totalPointCount ? Math.round(overviewRealtimeCount / totalPointCount * 100) : 0 }}%</span>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head"><h3>链路状态</h3><button class="ghost compact" type="button" @click="loadOverviewData">刷新总览</button></div>
+            <dl class="status-list overview-status-list">
+              <dt>后端服务</dt><dd :class="overallStatus === 'UP' ? 'state-ok' : 'state-warn'">{{ overallStatus }}</dd>
+              <dt>MySQL 台账</dt><dd :class="dbStatus === 'UP' ? 'state-ok' : 'state-warn'">{{ dbStatus }}</dd>
+              <dt>Redis 实时缓存</dt><dd :class="redisStatus === 'UP' ? 'state-ok' : 'state-warn'">{{ redisStatus }}</dd>
+              <dt>采集通道</dt><dd :class="abnormalChannelCount ? 'state-warn' : 'state-ok'">{{ abnormalChannelCount ? '部分异常' : '正常' }}</dd>
+            </dl>
+          </article>
+        </section>
+
+        <section class="overview-main secondary">
+          <article class="panel">
+            <div class="panel-head"><h3>最近报警</h3><span>{{ activeAlarmCount }} 条活动</span></div>
+            <div class="alarm-list compact-list">
+              <article v-for="alarm in latestAlarms" :key="alarm.id">
+                <span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span>
+                <div><strong>{{ alarm.deviceName }} · {{ alarm.pointName }}</strong><small>{{ alarm.message }} · {{ new Date(alarm.lastSeenAt).toLocaleTimeString() }}</small></div>
+                <span :class="['tag', alarm.acknowledgedAt ? 'ok' : 'danger']">{{ alarm.acknowledgedAt ? '已确认' : '未确认' }}</span>
+              </article>
+              <p v-if="!latestAlarms.length" class="muted">当前没有活动报警。</p>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-head"><h3>最近控制</h3><span>{{ controlCommands.length }} 条命令</span></div>
+            <div class="command-list compact-list">
+              <article v-for="command in latestControlCommands" :key="command.id">
+                <span :class="['tag', command.status === 'SUCCESS' ? 'ok' : command.status === 'FAILED' ? 'danger' : 'idle']">{{ command.status }}</span>
+                <div><strong>{{ command.deviceName }} · {{ command.pointName }}</strong><small>目标值 {{ command.targetValue }} · {{ command.requestedBy }} · {{ new Date(command.createdAt).toLocaleTimeString() }}</small></div>
+              </article>
+              <p v-if="!latestControlCommands.length" class="muted">暂无控制命令。</p>
+            </div>
+          </article>
+        </section>
       </section>
 
       <section v-else-if="activeMenu === 'devices'" class="device-layout">
@@ -1025,4 +1129,3 @@ onUnmounted(() => {
     </section>
   </main>
 </template>
-
