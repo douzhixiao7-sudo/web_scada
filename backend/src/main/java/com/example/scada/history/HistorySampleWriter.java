@@ -17,7 +17,7 @@ import com.example.scada.realtime.RealtimeValueResponse;
 
 @Component
 public class HistorySampleWriter {
-    private static final Duration ANALOG_SAMPLE_INTERVAL = Duration.ofSeconds(30);
+    private static final Duration ANALOG_SAMPLE_INTERVAL = Duration.ofMinutes(10);
 
     private final JdbcTemplate jdbcTemplate;
     private final Map<Long, LastSample> lastSamples = new ConcurrentHashMap<>();

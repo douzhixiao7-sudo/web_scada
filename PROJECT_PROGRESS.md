@@ -249,7 +249,7 @@
 
 - 新增 `scada_history_value` 历史采样表，字段包含设备、点位、值、质量和采集时间。
 - 采集调度器新增历史采样旁路：实时值继续写 Redis，历史采样按策略写 MySQL。
-- 采样策略：数字量按变化写入；模拟量按约 30 秒降频写入；`BAD` / `STALE` 质量变化立即写入。
+- 采样策略：数字量按变化写入；模拟量按约 10 分钟低频写入；`BAD` / `STALE` 质量变化立即写入。
 - 新增 `/api/history/values?pointId=...&start=...&end=...` 查询单点历史采样。
 - 新增 `/api/history/latest?deviceId=...` 查询设备下各点最新历史采样。
 - 前端“历史数据”页面新增设备、点位、时间范围筛选、趋势条形图、历史采样表和设备最新采样侧栏。
@@ -259,7 +259,7 @@
 - `scripts/build.ps1` 后端 Maven package 成功，前端 `vue-tsc --noEmit && vite build` 成功。
 - 前端代理健康检查返回 `UP`，组件 `db`、`redis` 均为 `UP`。
 - `admin/admin` 登录成功。
-- 采集器运行后 `scada_history_value` 自动写入历史采样；验证时表内已有 988 条采样。
+- 采集器运行后 `scada_history_value` 自动写入历史采样；历史表已按要求清空，后续仅作为低频占位采样。
 - `/api/history/latest?deviceId=...` 可返回设备点位最新采样。
 - `/api/history/values?pointId=...&start=...&end=...` 可返回单点最近一小时采样。
 

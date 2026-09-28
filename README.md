@@ -127,7 +127,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 当前没有引入时序库，历史数据 MVP 先使用 MySQL 表 `scada_history_value`。实时数据仍以 Redis Hash `scada:realtime:values` 作为当前值缓存；采集调度器额外按策略写入历史采样，避免每秒全量写库。
 
-采样策略为：数字量按值变化写入，模拟量按约 30 秒降频写入，`BAD` / `STALE` 等质量异常变化立即写入。后端接口包括 `GET /api/history/values?pointId=...&start=...&end=...` 和 `GET /api/history/latest?deviceId=...`。前端“历史数据”页已支持设备、点位、时间范围筛选，展示趋势条形图、采样表和设备最新采样。
+采样策略为：数字量按值变化写入，模拟量按约 10 分钟低频写入，`BAD` / `STALE` 等质量异常变化立即写入。后端接口包括 `GET /api/history/values?pointId=...&start=...&end=...` 和 `GET /api/history/latest?deviceId=...`。前端“历史数据”页已支持设备、点位、时间范围筛选，展示趋势条形图、采样表和设备最新采样。
 
 后续数据量增加后，可以把历史写入服务替换为 TDengine、TimescaleDB 或 InfluxDB，实时值 Redis 链路不需要改变。
 

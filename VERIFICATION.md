@@ -29,7 +29,7 @@
 - 采集通道接口：`/api/collect/channels` 返回 10 个通道；首个通道 `4#主机采集通道` 绑定 35 个点位；`PUT /api/collect/channels/{id}` 更新成功；`POST /api/collect/channels/{id}/poll` 可记录最后采集时间。
 - Modbus 数据区字典：`/api/dictionaries/modbus_area/items` 返回 4 项，分别为 0区 Coil、1区 Discrete Input、3区 Input Register、4区 Holding Register。
 - 控制下发接口：`POST /api/control/commands` 可对可写点位下发；本次验证 `4#主机启动`（`DO_ZJ4_QD`，Modbus 0 区，`W`）下发目标值 `1`，返回 `SUCCESS`；随后实时值接口读回 `1`，质量 `GOOD`。
-- 历史数据接口：`/api/history/latest?deviceId=...` 可返回设备最新采样；`/api/history/values?pointId=...&start=...&end=...` 可返回单点趋势采样；本次验证 `scada_history_value` 已写入 988 条采样。
+- 历史数据接口：`/api/history/latest?deviceId=...` 可返回设备最新采样；`/api/history/values?pointId=...&start=...&end=...` 可返回单点趋势采样；本次按 MVP 调整已清空 `scada_history_value`，后续仅低频占位写入。
 - 采集诊断接口：`/api/collect/channels/{id}/test-connection` 返回成功；`/api/collect/channels/{id}/test-read` 返回成功，本次读取 `4#主机运行 = 1`。
 - 控制保护接口：未带 `confirmed=true` 的控制请求被拒绝；确认后的 `4#主机启动` 控制命令返回 `SUCCESS`，记录包含 `confirmed=true` 和 `controlLevel=LOW`；按 `status=SUCCESS` 筛选可查询。
 - 报警规则维护接口：`POST /api/alarms/rules` 新增规则成功；按点位查询可见；`DELETE /api/alarms/rules/{id}` 删除后查询不可见。
