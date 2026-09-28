@@ -1,6 +1,6 @@
 # Web SCADA 验证记录
 
-验证时间：2026-09-28 10:48（Asia/Shanghai）
+验证时间：2026-09-28 10:55（Asia/Shanghai）
 
 ## 已验证
 
@@ -54,3 +54,23 @@
 - `scripts/build.ps1`：后端 Maven package 成功，前端 `vue-tsc --noEmit && vite build` 成功。
 - HMI 页面复用 `/api/devices`、`/api/points?deviceId=...`、`/api/realtime/values?deviceId=...` 和 `/api/alarms/active`。
 - HMI 支持设备节点选择、活动报警标识、关键点位实时值展示和页面停留自动刷新。
+
+## 2026-09-28 MVP 收尾验收
+
+- `scripts/stop.ps1`：无残留项目进程时可正常返回。
+- `scripts/build.ps1`：后端 Maven package 成功，前端 `vue-tsc --noEmit && vite build` 成功。
+- `scripts/start.ps1`：前端 `http://127.0.0.1:5173` 和后端 `http://127.0.0.1:8080` 启动成功，前端代理健康检查返回 `UP`。
+- 健康检查：`db=UP`，`redis=UP`。
+- 登录：`admin/admin` 登录成功，`/api/auth/me` 返回当前用户 `admin`。
+- 菜单：`/api/menus` 返回 8 个菜单。
+- 设备点位：`/api/devices` 返回 10 台设备；首台 `4#主机` 点位 35 个。
+- Redis 实时值：`/api/realtime/cache-size` 返回 270；`4#主机` 实时值返回 35 条。
+- 采集通道：`/api/collect/channels` 返回 10 条通道；首个通道状态为 `MODBUS_OK`。
+- 报警：`/api/alarms/active` 当前返回 32 条活动报警，报警链路可用。
+- 控制命令：`/api/control/commands` 当前返回 2 条命令，控制审计查询可用。
+- 历史低频占位：`/api/history/latest?deviceId=...` 可返回设备最新采样，本次 `4#主机` 返回 35 条。
+- 前端页面：`http://127.0.0.1:5173/` 返回 200，Vue 应用根节点存在。
+
+### MVP 结论
+
+当前 MVP 已形成本机闭环：登录菜单、设备点位、Modbus TCP 仿真 PLC、Java 采集、Redis 当前值、实时监控、报警闭环、控制下发保护、低频历史占位、首页总览和固定版 HMI。真实 PLC 接入、时序库、拖拉拽组态编辑器、细粒度权限、报表和生产部署属于 MVP+。
