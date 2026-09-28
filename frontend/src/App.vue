@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import * as echarts from 'echarts/core'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, LineChart } from 'echarts/charts'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { ECharts, EChartsCoreOption } from 'echarts/core'
 
 type HealthComponent = { status?: string }
 type HealthPayload = { status?: string; components?: Record<string, HealthComponent> }
@@ -55,6 +60,8 @@ type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceN
 type CollectDiagnostic = { channelId: number; channelName: string; success: boolean; message: string; latencyMs: number; pointId: number | null; pointCode: string; pointName: string; rawValue: string; quality: string }
 type HistoryValue = { id: number; deviceId: number; pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 type HistoryLatest = { pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
+
+echarts.use([GridComponent, TooltipComponent, BarChart, LineChart, CanvasRenderer])
 
 type DeviceForm = {
   areaId: number | null
@@ -135,6 +142,8 @@ let overviewRefreshTimer: ReturnType<typeof setInterval> | null = null
 let hmiRefreshTimer: ReturnType<typeof setInterval> | null = null
 const overviewRealtimeCount = ref(0)
 const overviewLastUpdated = ref('')
+const overviewChartRef = ref<HTMLElement | null>(null)
+let overviewChart: ECharts | null = null
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -204,10 +213,12 @@ const healthyChannelCount = computed(() => collectChannels.value.filter((channel
 const abnormalChannelCount = computed(() => collectChannels.value.filter((channel) => channel.enabled && !healthyChannelStatuses.includes(channel.status)).length)
 const latestAlarms = computed(() => alarmRows.value.slice(0, 4))
 const latestControlCommands = computed(() => controlCommands.value.slice(0, 4))
-const overviewTrendBars = computed(() => {
-  const base = Math.max(28, Math.min(92, Math.round((overviewRealtimeCount.value / Math.max(totalPointCount.value, 1)) * 100)))
-  return [base - 14, base - 7, base - 10, base + 3, base + 9, base + 1, base + 13, base + 8, base + 18, base + 10, base + 21, base + 16].map((value) => Math.max(16, Math.min(96, value)))
+const overviewCoverageRate = computed(() => totalPointCount.value ? Math.round((overviewRealtimeCount.value / totalPointCount.value) * 100) : 0)
+const overviewTrendSeries = computed(() => {
+  const base = Math.max(28, Math.min(94, overviewCoverageRate.value || 42))
+  return [base - 13, base - 8, base - 11, base - 3, base + 4, base + 1, base + 8, base + 5, base + 12, base + 9, base + 15, base + 11].map((value) => Math.max(12, Math.min(98, value)))
 })
+const overviewTrendLabels = ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00']
 const overviewScore = computed(() => {
   const healthPenalty = overallStatus.value === 'UP' ? 0 : 24
   const alarmPenalty = Math.min(activeAlarmCount.value * 6, 30)
@@ -217,6 +228,62 @@ const overviewScore = computed(() => {
 })
 const overviewStateText = computed(() => overviewScore.value >= 90 ? '运行平稳' : overviewScore.value >= 70 ? '需要关注' : '存在异常')
 
+
+function renderOverviewChart() {
+  if (!overviewChartRef.value) return
+  if (!overviewChart) overviewChart = echarts.init(overviewChartRef.value)
+  const option: EChartsCoreOption = {
+    color: ['#6bd7cc', '#5f7f88'],
+    grid: { left: 34, right: 18, top: 28, bottom: 30 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(11, 21, 26, .96)',
+      borderColor: '#3d6570',
+      textStyle: { color: '#dce7ec', fontSize: 12 },
+      axisPointer: { type: 'line', lineStyle: { color: 'rgba(125,226,215,.28)' } },
+      valueFormatter: (value: string | number) => `${value}%`,
+    },
+    xAxis: {
+      type: 'category',
+      data: overviewTrendLabels,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#28414b' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#8fa5ad', fontSize: 11 },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      splitNumber: 4,
+      axisLabel: { color: '#8fa5ad', fontSize: 11, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: 'rgba(67, 96, 106, .48)' } },
+    },
+    series: [
+      {
+        name: '覆盖率',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2 },
+        areaStyle: { color: 'rgba(107, 215, 204, .12)' },
+        data: overviewTrendSeries.value,
+      },
+      {
+        name: '当前覆盖',
+        type: 'bar',
+        barWidth: 6,
+        itemStyle: { borderRadius: 0, opacity: .42 },
+        data: overviewTrendSeries.value,
+      },
+    ],
+  }
+  overviewChart.setOption(option)
+}
+
+function resizeOverviewChart() {
+  overviewChart?.resize()
+}
 
 function emptyDeviceForm(): DeviceForm {
   return { areaId: null, name: '', code: '', type: '闸门', status: '运行', protocol: 'MODBUS_TCP', ipAddress: '127.0.0.1', port: 1502, description: '' }
@@ -913,9 +980,18 @@ async function deletePoint(point: Point) {
   }
 }
 
+watch([activeMenu, overviewTrendSeries, overviewRealtimeCount, totalPointCount], async () => {
+  if (activeMenu.value !== 'overview') return
+  await nextTick()
+  renderOverviewChart()
+})
+
 onMounted(async () => {
   await checkBackend()
   await loadCurrentUser()
+  await nextTick()
+  renderOverviewChart()
+  window.addEventListener('resize', resizeOverviewChart)
   monitorRefreshTimer = setInterval(() => {
     if (isAuthed.value && activeMenu.value === 'monitor') refreshMonitorPoints()
   }, 3000)
@@ -931,6 +1007,9 @@ onUnmounted(() => {
   if (monitorRefreshTimer) clearInterval(monitorRefreshTimer)
   if (overviewRefreshTimer) clearInterval(overviewRefreshTimer)
   if (hmiRefreshTimer) clearInterval(hmiRefreshTimer)
+  window.removeEventListener('resize', resizeOverviewChart)
+  overviewChart?.dispose()
+  overviewChart = null
 })
 </script>
 
@@ -1009,11 +1088,11 @@ onUnmounted(() => {
         <section class="overview-main">
           <article class="panel overview-trend-panel">
             <div class="panel-head"><h3>实时数据覆盖</h3><span>{{ overviewLastUpdated || '等待刷新' }}</span></div>
-            <div class="trend" aria-label="Redis 实时数据覆盖度"><span v-for="(bar, index) in overviewTrendBars" :key="index" :style="{ height: `${bar}%` }"></span></div>
+            <div ref="overviewChartRef" class="overview-chart" role="img" :aria-label="`Redis 实时数据覆盖率 ${overviewCoverageRate}%`"></div>
             <div class="overview-kpi-row">
               <span>Redis 当前值 {{ overviewRealtimeCount }} 条</span>
               <span>点位台账 {{ totalPointCount }} 条</span>
-              <span>覆盖率 {{ totalPointCount ? Math.round(overviewRealtimeCount / totalPointCount * 100) : 0 }}%</span>
+              <span>覆盖率 {{ overviewCoverageRate }}%</span>
             </div>
           </article>
 
