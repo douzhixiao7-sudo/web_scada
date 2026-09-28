@@ -15,6 +15,7 @@
     "vue": "3.5.43"
   },
   "devDependencies": {
+    "@rolldown/binding-darwin-x64": "1.2.11",
     "@vitejs/plugin-vue": "6.0.9",
     "typescript": "5.9.3",
     "vite": "8.3.0",
