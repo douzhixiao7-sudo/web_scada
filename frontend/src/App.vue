@@ -39,6 +39,8 @@ type Point = {
   ioModule: string
   ioType: string
   modbusType: string
+  controlLevel: string
+  controlConfirmRequired: boolean
   sixnetAddress: string
   iconicsPath: string
   remark: string
@@ -48,7 +50,7 @@ type AlarmEvent = { id: number; alarmKey: string; deviceId: number; deviceName: 
 type AlarmRule = { id: number; pointId: number; pointCode: string; pointName: string; ruleName: string; ruleType: string; operator: string; thresholdValue: number | null; level: string; message: string; enabled: boolean }
 type CollectChannel = { id: number; deviceId: number; deviceName: string; deviceCode: string; name: string; code: string; protocol: string; channelMode: string; host: string; port: number | null; slaveId: number; timeoutMs: number; retryCount: number; pollIntervalMs: number; enabled: boolean; status: string; pointCount: number; lastPolledAt: string | null; lastSuccessAt: string | null; lastError: string; lastLatencyMs: number | null; consecutiveFailures: number }
 type CollectBinding = { id: number; channelId: number; pointId: number; pointCode: string; pointName: string; address: string; modbusType: string; accessMode: string; enabled: boolean }
-type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; targetValue: number; status: string; message: string; requestedBy: string; createdAt: string; executedAt?: string | null }
+type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceName: string; pointId: number; pointCode: string; pointName: string; targetValue: number; controlLevel: string; confirmed: boolean; status: string; message: string; requestedBy: string; createdAt: string; executedAt?: string | null }
 type CollectDiagnostic = { channelId: number; channelName: string; success: boolean; message: string; latencyMs: number; pointId: number | null; pointCode: string; pointName: string; rawValue: string; quality: string }
 type HistoryValue = { id: number; deviceId: number; pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 type HistoryLatest = { pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
@@ -113,6 +115,7 @@ const collectChannels = ref<CollectChannel[]>([])
 const collectBindings = ref<CollectBinding[]>([])
 const controlCommands = ref<ControlCommand[]>([])
 const controlLoading = ref(false)
+const controlStatusFilter = ref('')
 const historyPoints = ref<Point[]>([])
 const historyRows = ref<HistoryValue[]>([])
 const historyLatestRows = ref<HistoryLatest[]>([])
@@ -515,7 +518,10 @@ function isWritableControlPoint(point: Point) {
 async function loadControlCommands(deviceId = monitorSelectedDevice.value?.id ?? null) {
   controlLoading.value = true
   try {
-    const query = deviceId ? `?deviceId=${deviceId}` : ''
+    const params = new URLSearchParams()
+    if (deviceId) params.set('deviceId', String(deviceId))
+    if (controlStatusFilter.value) params.set('status', controlStatusFilter.value)
+    const query = params.toString() ? `?${params}` : ''
     controlCommands.value = await apiFetch<ControlCommand[]>(`/api/control/commands${query}`)
   } finally {
     controlLoading.value = false
@@ -523,7 +529,8 @@ async function loadControlCommands(deviceId = monitorSelectedDevice.value?.id ??
 }
 
 async function sendControl(point: Point) {
-  const defaultValue = point.dataType === 'BOOLEAN' ? (realtimeValue(point)?.value === '1' ? '0' : '1') : (realtimeValue(point)?.value ?? '')
+  const current = realtimeValue(point)
+  const defaultValue = point.dataType === 'BOOLEAN' ? (current?.value === '1' ? '0' : '1') : (current?.value ?? '')
   const input = window.prompt(`下发控制：${point.name}，请输入目标值`, defaultValue)
   if (input === null) return
   const target = Number(input)
@@ -531,16 +538,38 @@ async function sendControl(point: Point) {
     window.alert('目标值必须是数字，布尔点请填 0 或 1')
     return
   }
+  const modbusArea = modbusAreaText(point.modbusType)
+  const confirmed = window.confirm([
+    '请确认控制下发',
+    `设备：${monitorSelectedDevice.value?.name ?? point.deviceId}`,
+    `点位：${point.name}（${point.code}）`,
+    `当前值：${current?.value ?? '未知'}${point.unit || ''}`,
+    `目标值：${target}${point.unit || ''}`,
+    `Modbus：${modbusArea}`,
+    `控制等级：${controlLevelText(point.controlLevel)}`,
+    '确认后命令会写入设备通道。',
+  ].join('\n'))
+  if (!confirmed) return
   const command = await apiFetch<ControlCommand>('/api/control/commands', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pointId: point.id, targetValue: target }),
+    body: JSON.stringify({ pointId: point.id, targetValue: target, confirmed: true }),
   })
   await refreshMonitorPoints()
   await loadControlCommands(point.deviceId)
   if (command.status !== 'SUCCESS') {
     window.alert(command.message || '控制命令执行失败')
   }
+}
+
+function modbusAreaText(type: string) {
+  const labels: Record<string, string> = { '0': '0区 Coil 线圈', '1': '1区 Discrete Input 只读', '3': '3区 Input Register 只读', '4': '4区 Holding Register 保持寄存器' }
+  return labels[type] ?? `类型 ${type || '未知'}`
+}
+
+function controlLevelText(level: string) {
+  const labels: Record<string, string> = { LOW: '低风险', MEDIUM: '中风险', HIGH: '高风险' }
+  return labels[level || 'LOW'] ?? level
 }
 
 async function initHistoryPage() {
@@ -846,7 +875,7 @@ onUnmounted(() => {
                   <td>{{ point.sourceGroup || '-' }}<small>{{ point.ioType || point.sourceSheet }}</small></td>
                   <td>{{ point.dataType }}<small>{{ point.unit || '无单位' }}</small></td>
                   <td>{{ point.address || '-' }}<small>{{ point.modbusType ? `类型 ${point.modbusType}` : point.ioModule }}</small></td>
-                  <td>{{ point.accessMode }}</td>
+                  <td>{{ point.accessMode }}<small>{{ controlLevelText(point.controlLevel) }}</small></td>
                   <td><span class="placeholder-value">{{ realtimeValue(point)?.value ?? '待接入' }}{{ point.unit && realtimeValue(point) ? ` ${point.unit}` : '' }}</span></td>
                   <td><span :class="['tag', realtimeValue(point)?.quality === 'GOOD' ? 'ok' : realtimeValue(point)?.quality === 'BAD' ? 'danger' : 'idle']">{{ realtimeValue(point)?.quality ?? '未采集' }}</span></td>
                   <td>{{ realtimeValue(point)?.collectedAt ? new Date(realtimeValue(point)!.collectedAt).toLocaleTimeString() : '等待实时接口' }}</td>
@@ -858,7 +887,8 @@ onUnmounted(() => {
         </section>
         <aside class="panel monitor-side">
           <div class="panel-head"><h3>控制命令</h3><span>{{ controlLoading ? '加载中' : `${controlCommands.length} 条` }}</span></div>
-          <div class="command-list"><article v-for="command in controlCommands" :key="command.id"><span :class="['tag', command.status === 'SUCCESS' ? 'ok' : command.status === 'FAILED' ? 'danger' : 'idle']">{{ command.status }}</span><div><strong>{{ command.pointName }} → {{ command.targetValue }}</strong><small>{{ command.message }} · {{ new Date(command.createdAt).toLocaleTimeString() }}</small></div></article><p v-if="!controlCommands.length && !controlLoading" class="muted">当前设备暂无控制命令。</p></div>
+          <div class="toolbar compact-toolbar"><label><span>状态</span><select v-model="controlStatusFilter" @change="loadControlCommands()"><option value="">全部</option><option value="SUCCESS">成功</option><option value="FAILED">失败</option><option value="PENDING">待执行</option></select></label><button class="ghost compact" type="button" @click="loadControlCommands()">刷新</button></div>
+          <div class="command-list"><article v-for="command in controlCommands" :key="command.id"><span :class="['tag', command.status === 'SUCCESS' ? 'ok' : command.status === 'FAILED' ? 'danger' : 'idle']">{{ command.status }}</span><div><strong>{{ command.pointName }} → {{ command.targetValue }}</strong><small>{{ command.deviceName }} · {{ controlLevelText(command.controlLevel) }} · {{ command.requestedBy }} · {{ new Date(command.createdAt).toLocaleTimeString() }}</small><small>{{ command.message }}<template v-if="command.confirmed"> · 已确认</template></small></div></article><p v-if="!controlCommands.length && !controlLoading" class="muted">当前设备暂无控制命令。</p></div>
           <dl class="status-list contract-list"><dt>0 区</dt><dd>线圈，可写 0/1</dd><dt>1 区</dt><dd>离散输入，只读</dd><dt>3 区</dt><dd>输入寄存器，只读</dd><dt>4 区</dt><dd>保持寄存器，可写数值</dd></dl>
           <p class="muted">下发命令先写入命令表，再写 Modbus TCP 仿真器；实时采集继续从仿真器读取并刷新 Redis 当前值缓存。</p>
         </aside>

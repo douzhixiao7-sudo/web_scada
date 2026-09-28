@@ -111,6 +111,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 
 当前只允许向 Modbus `0` 区 Coil 和 `4` 区 Holding Register 下发；`1` 区 Discrete Input 和 `3` 区 Input Register 按协议只读处理。前端实时监控页会根据点位读写属性和 Modbus 区域显示“下发”或“只读”，右侧展示最近控制命令。
 
+## 控制下发保护与审计 MVP
+
+控制点位已增加控制等级和确认要求，默认 `LOW` 且需要确认。提交控制命令时，前端会展示设备、点位、当前值、目标值、Modbus 区域和控制等级；后端要求请求体包含 `confirmed=true`，否则拒绝执行。控制命令记录会保存 `control_level` 和 `confirmed`，并支持按设备、状态查询最近记录。
+
+当前仍是 MVP 保护：已经避免未确认直接下发，但还没有做按钮级权限、高风险审批和独立控制审计页面。
+
 ## 历史数据 MVP
 
 当前没有引入时序库，历史数据 MVP 先使用 MySQL 表 `scada_history_value`。实时数据仍以 Redis Hash `scada:realtime:values` 作为当前值缓存；采集调度器额外按策略写入历史采样，避免每秒全量写库。
@@ -133,5 +139,5 @@ scripts/              工具安装、构建、启动、停止脚本
 
 ## 后续边界
 
-TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。真实 Modbus 接入诊断已准备好，下一阶段可进入控制权限审计增强、报警规则新增/删除或历史报表。
+TDengine、MQTT、OPC UA、WebSocket 业务订阅、细粒度权限、报警新增/删除、报表与 HMI 均未开发。真实 Modbus 接入诊断和控制确认审计已准备好，下一阶段可进入报警规则新增/删除、历史保留策略或首页总览真实统计。
 

@@ -72,7 +72,7 @@ public class DeviceService {
         ensureDeviceExists(deviceId);
         return jdbcTemplate.query("""
                 select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order,
-                       source_group, source_sheet, io_module, io_type, modbus_type, sixnet_address, iconics_path, remark
+                       source_group, source_sheet, io_module, io_type, modbus_type, control_level, control_confirm_required, sixnet_address, iconics_path, remark
                 from scada_point
                 where device_id = ?
                 order by sort_order, id
@@ -92,6 +92,8 @@ public class DeviceService {
                 rs.getString("io_module"),
                 rs.getString("io_type"),
                 rs.getString("modbus_type"),
+                rs.getString("control_level"),
+                rs.getBoolean("control_confirm_required"),
                 rs.getString("sixnet_address"),
                 rs.getString("iconics_path"),
                 rs.getString("remark")
@@ -192,7 +194,7 @@ public class DeviceService {
     private PointResponse getPoint(Long deviceId, Long pointId) {
         List<PointResponse> points = jdbcTemplate.query("""
                 select id, device_id, name, code, data_type, unit, address, access_mode, scale_value, sort_order,
-                       source_group, source_sheet, io_module, io_type, modbus_type, sixnet_address, iconics_path, remark
+                       source_group, source_sheet, io_module, io_type, modbus_type, control_level, control_confirm_required, sixnet_address, iconics_path, remark
                 from scada_point
                 where id = ? and device_id = ?
                 """, (rs, rowNum) -> new PointResponse(
@@ -211,6 +213,8 @@ public class DeviceService {
                 rs.getString("io_module"),
                 rs.getString("io_type"),
                 rs.getString("modbus_type"),
+                rs.getString("control_level"),
+                rs.getBoolean("control_confirm_required"),
                 rs.getString("sixnet_address"),
                 rs.getString("iconics_path"),
                 rs.getString("remark")

@@ -12,6 +12,8 @@ public record ControlCommandResponse(
         String pointCode,
         String pointName,
         BigDecimal targetValue,
+        String controlLevel,
+        Boolean confirmed,
         String status,
         String message,
         String requestedBy,

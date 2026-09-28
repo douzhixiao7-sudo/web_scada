@@ -36,14 +36,15 @@ public class ControlCommandService {
         }
         ControlPoint point = loadPoint(request.pointId());
         validateWritable(point);
+        validateConfirmed(request, point);
         String commandNo = "CMD-" + Instant.now().toEpochMilli() + "-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         String requestedBy = currentUsername();
         jdbcTemplate.update("""
                 insert into scada_control_command(command_no, device_id, device_name, point_id, point_code, point_name,
-                    target_value, status, message, requested_by)
-                values (?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+                    target_value, control_level, confirmed, status, message, requested_by)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
                 """, commandNo, point.deviceId(), point.deviceName(), point.pointId(), point.pointCode(), point.pointName(),
-                request.targetValue(), "命令已创建，等待写入", requestedBy);
+                request.targetValue(), point.controlLevel(), Boolean.TRUE.equals(request.confirmed()) ? 1 : 0, "命令已确认，等待写入", requestedBy);
         Long id = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
         try {
             modbusTcpClient.writeValue(point.host(), point.port(), point.modbusType(), point.address(), point.dataType(), request.targetValue());
@@ -62,22 +63,30 @@ public class ControlCommandService {
         return getCommand(id);
     }
 
-    public List<ControlCommandResponse> list(Long deviceId) {
-        String sql = """
+    public List<ControlCommandResponse> list(Long deviceId, String status) {
+        StringBuilder sql = new StringBuilder("""
                 select id, command_no, device_id, device_name, point_id, point_code, point_name, target_value,
-                       status, message, requested_by, created_at, executed_at
+                       control_level, confirmed, status, message, requested_by, created_at, executed_at
                 from scada_control_command
-                """;
-        if (deviceId == null) {
-            return jdbcTemplate.query(sql + " order by id desc limit 50", (rs, rowNum) -> mapCommand(rs));
+                where 1 = 1
+                """);
+        java.util.ArrayList<Object> params = new java.util.ArrayList<>();
+        if (deviceId != null) {
+            sql.append(" and device_id = ?");
+            params.add(deviceId);
         }
-        return jdbcTemplate.query(sql + " where device_id = ? order by id desc limit 50", (rs, rowNum) -> mapCommand(rs), deviceId);
+        if (status != null && !status.isBlank()) {
+            sql.append(" and status = ?");
+            params.add(status.trim());
+        }
+        sql.append(" order by id desc limit 80");
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> mapCommand(rs), params.toArray());
     }
 
     private ControlCommandResponse getCommand(Long id) {
         return jdbcTemplate.queryForObject("""
                 select id, command_no, device_id, device_name, point_id, point_code, point_name, target_value,
-                       status, message, requested_by, created_at, executed_at
+                       control_level, confirmed, status, message, requested_by, created_at, executed_at
                 from scada_control_command
                 where id = ?
                 """, (rs, rowNum) -> mapCommand(rs), id);
@@ -86,7 +95,7 @@ public class ControlCommandService {
     private ControlPoint loadPoint(Long pointId) {
         List<ControlPoint> rows = jdbcTemplate.query("""
                 select p.id as point_id, p.code as point_code, p.name as point_name, p.data_type, p.address,
-                       p.access_mode, p.modbus_type, d.id as device_id, d.name as device_name,
+                       p.access_mode, p.modbus_type, p.control_level, p.control_confirm_required, d.id as device_id, d.name as device_name,
                        coalesce(nullif(c.host, ''), nullif(d.ip_address, ''), '127.0.0.1') as host,
                        coalesce(c.port, d.port, 1502) as port
                 from scada_point p
@@ -102,6 +111,8 @@ public class ControlCommandService {
                 rs.getString("address"),
                 rs.getString("access_mode"),
                 rs.getString("modbus_type"),
+                rs.getString("control_level"),
+                rs.getBoolean("control_confirm_required"),
                 rs.getLong("device_id"),
                 rs.getString("device_name"),
                 rs.getString("host"),
@@ -120,6 +131,12 @@ public class ControlCommandService {
         String modbusType = point.modbusType() == null ? "" : point.modbusType().trim();
         if (!"0".equals(modbusType) && !"4".equals(modbusType)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "仅支持 Modbus 0 区线圈和 4 区保持寄存器写入");
+        }
+    }
+
+    private void validateConfirmed(ControlCommandRequest request, ControlPoint point) {
+        if (Boolean.TRUE.equals(point.controlConfirmRequired()) && !Boolean.TRUE.equals(request.confirmed())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "控制下发需要二次确认");
         }
     }
 
@@ -146,6 +163,8 @@ public class ControlCommandService {
                 rs.getString("point_code"),
                 rs.getString("point_name"),
                 rs.getBigDecimal("target_value"),
+                rs.getString("control_level"),
+                rs.getBoolean("confirmed"),
                 rs.getString("status"),
                 rs.getString("message"),
                 rs.getString("requested_by"),
@@ -155,7 +174,7 @@ public class ControlCommandService {
     }
 
     private record ControlPoint(Long pointId, String pointCode, String pointName, String dataType, String address,
-                                String accessMode, String modbusType, Long deviceId, String deviceName,
-                                String host, Integer port) {
+                                String accessMode, String modbusType, String controlLevel, Boolean controlConfirmRequired,
+                                Long deviceId, String deviceName, String host, Integer port) {
     }
 }

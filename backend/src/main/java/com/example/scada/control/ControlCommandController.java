@@ -19,8 +19,10 @@ public class ControlCommandController {
     }
 
     @GetMapping
-    public List<ControlCommandResponse> list(@RequestParam(required = false) Long deviceId) {
-        return controlCommandService.list(deviceId);
+    public List<ControlCommandResponse> list(
+            @RequestParam(required = false) Long deviceId,
+            @RequestParam(required = false) String status) {
+        return controlCommandService.list(deviceId, status);
     }
 
     @PostMapping

@@ -289,6 +289,10 @@ public class DatabaseInitializer implements ApplicationRunner {
         addColumnIfMissing("scada_collect_channel", "last_error", "varchar(255) not null default ''");
         addColumnIfMissing("scada_collect_channel", "last_latency_ms", "int null");
         addColumnIfMissing("scada_collect_channel", "consecutive_failures", "int not null default 0");
+        addColumnIfMissing("scada_point", "control_level", "varchar(32) not null default 'LOW'");
+        addColumnIfMissing("scada_point", "control_confirm_required", "tinyint not null default 1");
+        addColumnIfMissing("scada_control_command", "control_level", "varchar(32) not null default 'LOW'");
+        addColumnIfMissing("scada_control_command", "confirmed", "tinyint not null default 0");
         addColumnIfMissing("scada_point", "source_group", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "source_sheet", "varchar(128) not null default ''");
         addColumnIfMissing("scada_point", "io_module", "varchar(64) not null default ''");

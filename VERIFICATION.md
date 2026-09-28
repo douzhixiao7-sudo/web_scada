@@ -31,10 +31,11 @@
 - 控制下发接口：`POST /api/control/commands` 可对可写点位下发；本次验证 `4#主机启动`（`DO_ZJ4_QD`，Modbus 0 区，`W`）下发目标值 `1`，返回 `SUCCESS`；随后实时值接口读回 `1`，质量 `GOOD`。
 - 历史数据接口：`/api/history/latest?deviceId=...` 可返回设备最新采样；`/api/history/values?pointId=...&start=...&end=...` 可返回单点趋势采样；本次验证 `scada_history_value` 已写入 988 条采样。
 - 采集诊断接口：`/api/collect/channels/{id}/test-connection` 返回成功；`/api/collect/channels/{id}/test-read` 返回成功，本次读取 `4#主机运行 = 1`。
+- 控制保护接口：未带 `confirmed=true` 的控制请求被拒绝；确认后的 `4#主机启动` 控制命令返回 `SUCCESS`，记录包含 `confirmed=true` 和 `controlLevel=LOW`；按 `status=SUCCESS` 筛选可查询。
 
 ## 当前范围
 
-项目包含可运行框架、基础连接验证、开发期认证菜单、基于金斗河现场点表的设备/点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、实时监控页面、报警闭环、报警规则维护 MVP、控制下发 MVP、历史数据 MVP 和采集通道诊断 MVP。当前没有真实 PLC 正式接入、报警规则新增/删除、历史高级筛选、报表或组态功能。
+项目包含可运行框架、基础连接验证、开发期认证菜单、基于金斗河现场点表的设备/点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、实时监控页面、报警闭环、报警规则维护 MVP、控制下发与保护审计 MVP、历史数据 MVP 和采集通道诊断 MVP。当前没有真实 PLC 正式接入、报警规则新增/删除、历史高级筛选、报表或组态功能。
 
 ## 本地文件
 

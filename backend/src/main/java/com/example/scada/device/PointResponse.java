@@ -16,6 +16,8 @@ public record PointResponse(
         String ioModule,
         String ioType,
         String modbusType,
+        String controlLevel,
+        Boolean controlConfirmRequired,
         String sixnetAddress,
         String iconicsPath,
         String remark) {
