@@ -5,6 +5,8 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { BarChart, LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ECharts, EChartsCoreOption } from 'echarts/core'
+import HmiEditor from './components/HmiEditor.vue'
+const hmiEditorOpen = ref(false)
 
 type HealthComponent = { status?: string }
 type HealthPayload = { status?: string; components?: Record<string, HealthComponent> }
@@ -1244,7 +1246,9 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="activeMenu === 'hmi'" class="hmi-page">
-        <section class="hmi-canvas panel">
+        <div style="grid-column: 1 / -1; display:flex; gap:8px"><button class="ghost compact" @click="hmiEditorOpen = false">现场展示</button><button class="ghost compact" @click="hmiEditorOpen = true">画布编辑</button></div>
+        <HmiEditor v-show="hmiEditorOpen" />
+        <section v-show="!hmiEditorOpen" class="hmi-canvas panel">
           <div class="panel-head"><div><h3>金斗河固定版 HMI</h3><span>展示型组态 · Redis 当前值 · {{ hmiLastUpdated || '等待刷新' }}</span></div><button class="ghost compact" type="button" @click="refreshHmiValues">刷新画面</button></div>
           <div class="hmi-process" aria-label="金斗河现场设备组态展示">
             <div class="hmi-water"><span>金斗河现场工艺线</span></div>
@@ -1258,7 +1262,7 @@ onUnmounted(() => {
           <div class="hmi-legend"><span><i class="ok"></i>运行</span><span><i class="idle"></i>待机/未知</span><span><i class="danger"></i>报警</span><span>当前值 {{ hmiGoodValueCount }}/{{ hmiPoints.length }}</span></div>
         </section>
 
-        <aside class="panel hmi-detail">
+        <aside v-show="!hmiEditorOpen" class="panel hmi-detail">
           <div class="panel-head"><h3>{{ hmiSelectedDevice?.name ?? '未选择设备' }}</h3><span>{{ hmiSelectedDevice?.code ?? '-' }}</span></div>
           <dl class="status-list hmi-device-meta"><dt>区域</dt><dd>{{ hmiSelectedDevice?.areaName ?? '-' }}</dd><dt>协议</dt><dd>{{ hmiSelectedDevice?.protocol ?? '-' }}</dd><dt>地址</dt><dd>{{ hmiSelectedDevice?.ipAddress }}{{ hmiSelectedDevice?.port ? `:${hmiSelectedDevice.port}` : '' }}</dd><dt>点位</dt><dd>{{ hmiPoints.length }}</dd></dl>
           <div class="hmi-alarm-strip" :class="hmiSelectedAlarms.length ? 'danger' : 'ok'">
