@@ -97,6 +97,7 @@ const isAuthed = ref(false)
 const user = ref<AuthUser | null>(null)
 const menuItems = ref<MenuItem[]>(fallbackMenus)
 const activeMenu = ref('overview')
+const sidebarCollapsed = ref(false)
 const health = ref<HealthPayload | null>(null)
 const healthText = ref('正在连接')
 const checking = ref(false)
@@ -151,6 +152,17 @@ const hmiRealtimeValues = ref<Record<number, RealtimeValue>>({})
 const hmiLastUpdated = ref('')
 const deviceForm = ref<DeviceForm>(emptyDeviceForm())
 const pointForm = ref<PointForm>(emptyPointForm())
+
+const menuIconPaths: Record<string, string> = {
+  overview: '<path d="M3 12h4l2-6 4 12 2-6h6"/><path d="M4 20h16"/>',
+  devices: '<rect x="4" y="5" width="16" height="14" rx="1.5"/><path d="M8 9h8M8 13h8M9 17h1M14 17h1"/>',
+  monitor: '<path d="M4 18V6"/><path d="M8 18v-7"/><path d="M12 18V8"/><path d="M16 18v-5"/><path d="M20 18V4"/>',
+  alarms: '<path d="M12 3 2.8 19h18.4L12 3Z"/><path d="M12 8v5"/><path d="M12 16h.01"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/>',
+  hmi: '<rect x="3" y="4" width="18" height="14" rx="1.5"/><path d="M7 20h10"/><path d="M9 18v2M15 18v2"/><path d="M7 12h3l2-4 2 8 2-4h1"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  settings: '<circle cx="12" cy="12" r="3.5"/><path d="M19 12h2M3 12h2M12 3v2M12 19v2M17 7l1.4-1.4M5.6 18.4 7 17M7 7 5.6 5.6M18.4 18.4 17 17"/>',
+}
 
 const activeItem = computed(() => menuItems.value.find((item) => item.key === activeMenu.value) ?? menuItems.value[0] ?? fallbackMenus[0])
 const dbStatus = computed(() => health.value?.components?.db?.status ?? 'UNKNOWN')
@@ -259,6 +271,10 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   if (!response.ok) throw new Error(await parseError(response))
   if (response.status === 204) return undefined as T
   return (await response.json()) as T
+}
+
+function menuIconPath(key: string) {
+  return menuIconPaths[key] ?? '<circle cx="12" cy="12" r="7"/><path d="M12 8v8M8 12h8"/>'
 }
 
 function handleMenuClick(key: string) {
@@ -940,12 +956,20 @@ onUnmounted(() => {
     </section>
   </main>
 
-  <main v-else class="app-shell">
+  <main v-else :class="['app-shell', { 'sidebar-is-collapsed': sidebarCollapsed }]">
     <aside class="sidebar" aria-label="后台菜单">
-      <div class="product-mark"><span class="mark-grid"></span><div><strong>Web SCADA</strong><small>{{ displayName }}</small></div></div>
-      <nav>
-        <button v-for="item in menuItems" :key="item.key" :class="['nav-item', { active: activeMenu === item.key }]" type="button" @click="handleMenuClick(item.key)">
-          <span class="nav-icon" aria-hidden="true">{{ item.icon }}</span><span><strong>{{ item.label }}</strong><small>{{ item.helper }}</small></span>
+      <div class="product-mark">
+        <span class="mark-grid" aria-hidden="true"><span></span></span>
+        <div class="product-copy"><strong>Web SCADA</strong><small>{{ displayName }}</small></div>
+        <button class="sidebar-toggle" type="button" :aria-label="sidebarCollapsed ? '展开菜单' : '折叠菜单'" :aria-expanded="!sidebarCollapsed" @click="sidebarCollapsed = !sidebarCollapsed">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6 9 12l6 6" /></svg>
+        </button>
+      </div>
+      <nav class="sidebar-nav" aria-label="主菜单">
+        <p class="nav-section-label">运行与配置</p>
+        <button v-for="item in menuItems" :key="item.key" :class="['nav-item', { active: activeMenu === item.key }]" type="button" :title="sidebarCollapsed ? item.label : undefined" @click="handleMenuClick(item.key)">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" v-html="menuIconPath(item.key)"></svg>
+          <span class="nav-copy"><strong>{{ item.label }}</strong><small>{{ item.helper }}</small></span>
         </button>
       </nav>
     </aside>
