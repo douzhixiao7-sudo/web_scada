@@ -119,6 +119,7 @@ const realtimeValues = ref<Record<number, RealtimeValue>>({})
 const alarmRows = ref<AlarmEvent[]>([])
 const alarmLoading = ref(false)
 const alarmStatusFilter = ref('ACTIVE')
+const highlightedAlarmId = ref<number | null>(null)
 const alarmRules = ref<AlarmRule[]>([])
 const alarmRuleDeviceId = ref<number | null>(null)
 const alarmRuleLoading = ref(false)
@@ -144,8 +145,10 @@ let overviewRefreshTimer: ReturnType<typeof setInterval> | null = null
 let hmiRefreshTimer: ReturnType<typeof setInterval> | null = null
 const overviewRealtimeCount = ref(0)
 const overviewLastUpdated = ref('')
+const animatedOverviewScore = ref(100)
 const overviewChartRef = ref<HTMLElement | null>(null)
 let overviewChart: ECharts | null = null
+let overviewScoreAnimation: number | null = null
 const selectedDevice = ref<Device | null>(null)
 const deviceError = ref('')
 const deviceLoading = ref(false)
@@ -229,6 +232,34 @@ const overviewScore = computed(() => {
   return Math.max(0, 100 - healthPenalty - alarmPenalty - channelPenalty - redisPenalty)
 })
 const overviewStateText = computed(() => overviewScore.value >= 90 ? '运行平稳' : overviewScore.value >= 70 ? '需要关注' : '存在异常')
+const overviewFloatingMetrics = computed(() => [
+  { label: '运行设备', value: `${onlineDeviceCount.value} 台`, tone: 'ok' },
+  { label: '未确认报警', value: `${unackedAlarmCount.value} 条`, tone: unackedAlarmCount.value ? 'warn' : 'ok' },
+  { label: 'Redis 当前值', value: `${overviewRealtimeCount.value} 条`, tone: redisStatus.value === 'UP' ? 'ok' : 'warn' },
+  { label: '通道健康', value: abnormalChannelCount.value ? `${abnormalChannelCount.value} 异常` : '正常', tone: abnormalChannelCount.value ? 'warn' : 'ok' },
+  { label: '最近刷新', value: overviewLastUpdated.value || '等待', tone: 'info' },
+])
+function animateOverviewScore(target: number) {
+  if (overviewScoreAnimation !== null) cancelAnimationFrame(overviewScoreAnimation)
+  const from = 0
+  const duration = 2200
+  const startedAt = performance.now()
+
+  const tick = (now: number) => {
+    const progress = Math.min(1, (now - startedAt) / duration)
+    const eased = 1 - Math.pow(1 - progress, 3)
+    animatedOverviewScore.value = Math.round(from + (target - from) * eased)
+    if (progress < 1) {
+      overviewScoreAnimation = requestAnimationFrame(tick)
+    } else {
+      animatedOverviewScore.value = target
+      overviewScoreAnimation = null
+    }
+  }
+
+  animatedOverviewScore.value = from
+  overviewScoreAnimation = requestAnimationFrame(tick)
+}
 
 
 function renderOverviewChart() {
@@ -349,6 +380,23 @@ function menuIconPath(key: string) {
 function handleMenuClick(key: string) {
   activeMenu.value = key
   if (key === 'hmi') void initHmiPage()
+}
+
+async function openAlarmFromOverview(alarm: AlarmEvent) {
+  highlightedAlarmId.value = alarm.id
+  activeMenu.value = 'alarms'
+  alarmStatusFilter.value = 'ACTIVE'
+  await nextTick()
+  await loadAlarms()
+}
+
+function clearAlarmHighlightOnOutsideClick(event: MouseEvent) {
+  if (highlightedAlarmId.value === null) return
+  const target = event.target instanceof Element ? event.target : null
+  if (!target) return
+  if (target.closest('.overview-ticker-item')) return
+  if (target.closest('.alarm-list article.highlighted')) return
+  highlightedAlarmId.value = null
 }
 
 async function initHmiPage() {
@@ -988,12 +1036,17 @@ watch([activeMenu, overviewTrendSeries, overviewRealtimeCount, totalPointCount],
   renderOverviewChart()
 })
 
+watch(overviewScore, (score) => {
+  animateOverviewScore(score)
+}, { immediate: true })
+
 onMounted(async () => {
   await checkBackend()
   await loadCurrentUser()
   await nextTick()
   renderOverviewChart()
   window.addEventListener('resize', resizeOverviewChart)
+  window.addEventListener('click', clearAlarmHighlightOnOutsideClick)
   monitorRefreshTimer = setInterval(() => {
     if (isAuthed.value && activeMenu.value === 'monitor') refreshMonitorPoints()
   }, 3000)
@@ -1009,7 +1062,9 @@ onUnmounted(() => {
   if (monitorRefreshTimer) clearInterval(monitorRefreshTimer)
   if (overviewRefreshTimer) clearInterval(overviewRefreshTimer)
   if (hmiRefreshTimer) clearInterval(hmiRefreshTimer)
+  if (overviewScoreAnimation !== null) cancelAnimationFrame(overviewScoreAnimation)
   window.removeEventListener('resize', resizeOverviewChart)
+  window.removeEventListener('click', clearAlarmHighlightOnOutsideClick)
   overviewChart?.dispose()
   overviewChart = null
 })
@@ -1068,21 +1123,48 @@ onUnmounted(() => {
       </header>
 
       <section v-if="activeMenu === 'overview'" class="overview-page">
-        <section class="overview-hero panel">
-          <div class="overview-hero-copy">
-            <span class="overview-state-label">运行态势</span>
-            <h3>{{ overviewStateText }}</h3>
+        <section class="overview-command-center">
+          <div class="overview-command-head">
+            <div>
+              <span class="overview-state-label">SITUATION OVERVIEW</span>
+              <h3>{{ overviewStateText }}</h3>
+            </div>
+            <button class="ghost compact" type="button" @click="loadOverviewData">刷新总览</button>
           </div>
-          <div class="overview-score" :class="overviewScore >= 90 ? 'ok' : overviewScore >= 70 ? 'warn' : 'danger'">
-            <strong>{{ overviewScore }}</strong>
-            <span>评分</span>
-          </div>
-        </section>
 
-        <section class="content-grid overview-grid">
-          <article class="metric-card"><span>设备 / 点位</span><strong>{{ devices.length }} / {{ totalPointCount }}</strong><small>{{ onlineDeviceCount }} 台运行</small></article>
-          <article :class="['metric-card', activeAlarmCount ? 'warn' : '']"><span>当前报警</span><strong>{{ activeAlarmCount }}</strong><small>{{ unackedAlarmCount }} 条未确认</small></article>
-          <article :class="['metric-card', abnormalChannelCount ? 'warn' : '']"><span>采集通道</span><strong>{{ healthyChannelCount }} / {{ collectChannels.length }}</strong><small>{{ abnormalChannelCount ? `${abnormalChannelCount} 条异常` : '全部正常' }}</small></article>
+          <div class="overview-summary-strip">
+            <article><span>设备 / 点位</span><strong>{{ devices.length }} / {{ totalPointCount }}</strong></article>
+            <article :class="{ warn: activeAlarmCount }"><span>当前报警</span><strong>{{ activeAlarmCount }}</strong></article>
+            <article :class="{ warn: abnormalChannelCount }"><span>采集通道</span><strong>{{ healthyChannelCount }} / {{ collectChannels.length }}</strong></article>
+            <article><span>实时覆盖率</span><strong>{{ overviewCoverageRate }}%</strong></article>
+          </div>
+
+          <div class="overview-situation-hero">
+            <div v-for="(metric, index) in overviewFloatingMetrics" :key="metric.label" :class="['overview-float-metric', `pos-${index + 1}`, metric.tone]">
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+            </div>
+            <div class="overview-score-core" :class="overviewScore >= 90 ? 'ok' : overviewScore >= 70 ? 'warn' : 'danger'">
+              <strong class="overview-score-number">{{ animatedOverviewScore }}</strong>
+              <span class="overview-score-label">运行评分</span>
+            </div>
+          </div>
+
+          <div :class="['overview-alarm-ticker', { 'is-empty': !latestAlarms.length }]">
+            <strong class="overview-alarm-title">告警动态</strong>
+            <div class="overview-ticker-viewport">
+              <div class="overview-ticker-track">
+                <template v-if="latestAlarms.length">
+                  <button v-for="alarm in latestAlarms" :key="alarm.id" class="overview-ticker-item" type="button" @click="openAlarmFromOverview(alarm)">
+                    <b :class="alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info'">{{ alarm.level }}</b>
+                    <em>{{ alarm.deviceName }}</em>
+                    {{ alarm.message }}
+                  </button>
+                </template>
+                <span v-else class="overview-ticker-item"><b class="info">INFO</b><em>系统</em>暂无告警</span>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="overview-main">
@@ -1280,7 +1362,7 @@ onUnmounted(() => {
         </aside>
       </section>
 
-      <section v-else-if="activeMenu === 'alarms'" class="alarm-page"><section class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section><section class="panel page-panel"><div class="panel-head"><h3>报警规则维护</h3><span>{{ alarmRuleLoading ? '加载中' : `规则 ${alarmRules.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>设备</span><select v-model.number="alarmRuleDeviceId" @change="loadAlarmRules"><option :value="null">全部设备</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label><button class="ghost compact" type="button" @click="loadAlarmRules">刷新规则</button></div><form class="alarm-rule-form" @submit.prevent="createAlarmRule"><label><span>点位</span><select v-model.number="alarmRuleForm.pointId"><option v-for="point in alarmRulePoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label><label><span>规则名称</span><input v-model="alarmRuleForm.ruleName" /></label><label><span>类型</span><select v-model="alarmRuleForm.ruleType"><option v-for="item in alarmRuleTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label><span>操作符</span><select v-model="alarmRuleForm.operator"><option value=">">大于</option><option value="<">小于</option><option value="=">等于</option></select></label><label><span>阈值</span><input v-model.number="alarmRuleForm.thresholdValue" type="number" step="0.0001" /></label><label><span>等级</span><select v-model="alarmRuleForm.level"><option v-for="level in alarmLevelOptions" :key="level" :value="level">{{ level }}</option></select></label><label class="span-2"><span>报警内容</span><input v-model="alarmRuleForm.message" /></label><label><span>启用</span><select v-model="alarmRuleForm.enabled"><option :value="true">启用</option><option :value="false">停用</option></select></label><button class="primary compact" type="submit">新增规则</button></form><div class="table-wrap"><table><thead><tr><th>点位</th><th>规则</th><th>类型</th><th>阈值</th><th>等级</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="rule in alarmRules" :key="rule.id"><td>{{ rule.pointName }}<small>{{ rule.pointCode }}</small></td><td>{{ rule.ruleName }}<small>{{ rule.message }}</small></td><td>{{ ruleTypeText(rule.ruleType) }}</td><td>{{ rule.thresholdValue ?? '-' }}</td><td>{{ rule.level }}</td><td><span :class="['tag', rule.enabled ? 'ok' : 'idle']">{{ rule.enabled ? '启用' : '停用' }}</span></td><td class="row-actions"><button class="ghost compact" type="button" @click="editAlarmRule(rule)">编辑</button><button class="ghost compact" type="button" @click="deleteAlarmRule(rule)">删除</button></td></tr></tbody></table></div></section></section>
+      <section v-else-if="activeMenu === 'alarms'" class="alarm-page"><section class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id" :class="{ highlighted: alarm.id === highlightedAlarmId }"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section><section class="panel page-panel"><div class="panel-head"><h3>报警规则维护</h3><span>{{ alarmRuleLoading ? '加载中' : `规则 ${alarmRules.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>设备</span><select v-model.number="alarmRuleDeviceId" @change="loadAlarmRules"><option :value="null">全部设备</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label><button class="ghost compact" type="button" @click="loadAlarmRules">刷新规则</button></div><form class="alarm-rule-form" @submit.prevent="createAlarmRule"><label><span>点位</span><select v-model.number="alarmRuleForm.pointId"><option v-for="point in alarmRulePoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label><label><span>规则名称</span><input v-model="alarmRuleForm.ruleName" /></label><label><span>类型</span><select v-model="alarmRuleForm.ruleType"><option v-for="item in alarmRuleTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label><span>操作符</span><select v-model="alarmRuleForm.operator"><option value=">">大于</option><option value="<">小于</option><option value="=">等于</option></select></label><label><span>阈值</span><input v-model.number="alarmRuleForm.thresholdValue" type="number" step="0.0001" /></label><label><span>等级</span><select v-model="alarmRuleForm.level"><option v-for="level in alarmLevelOptions" :key="level" :value="level">{{ level }}</option></select></label><label class="span-2"><span>报警内容</span><input v-model="alarmRuleForm.message" /></label><label><span>启用</span><select v-model="alarmRuleForm.enabled"><option :value="true">启用</option><option :value="false">停用</option></select></label><button class="primary compact" type="submit">新增规则</button></form><div class="table-wrap"><table><thead><tr><th>点位</th><th>规则</th><th>类型</th><th>阈值</th><th>等级</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="rule in alarmRules" :key="rule.id"><td>{{ rule.pointName }}<small>{{ rule.pointCode }}</small></td><td>{{ rule.ruleName }}<small>{{ rule.message }}</small></td><td>{{ ruleTypeText(rule.ruleType) }}</td><td>{{ rule.thresholdValue ?? '-' }}</td><td>{{ rule.level }}</td><td><span :class="['tag', rule.enabled ? 'ok' : 'idle']">{{ rule.enabled ? '启用' : '停用' }}</span></td><td class="row-actions"><button class="ghost compact" type="button" @click="editAlarmRule(rule)">编辑</button><button class="ghost compact" type="button" @click="deleteAlarmRule(rule)">删除</button></td></tr></tbody></table></div></section></section>
 
 
       <section v-else-if="activeMenu === 'settings'" class="collector-page">
