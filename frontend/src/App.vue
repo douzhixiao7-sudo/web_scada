@@ -5,8 +5,33 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { BarChart, LineChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { ECharts, EChartsCoreOption } from 'echarts/core'
+import { NConfigProvider } from 'naive-ui/es/config-provider'
+import { NInput } from 'naive-ui/es/input'
+import { NInputNumber } from 'naive-ui/es/input-number'
+import { NSelect } from 'naive-ui/es/select'
+import { NTabPane, NTabs } from 'naive-ui/es/tabs'
+import { darkTheme } from 'naive-ui/es/themes'
 import HmiEditor from './components/HmiEditor.vue'
+import AppModal from './components/AppModal.vue'
+type ThemeMode = 'dark' | 'light'
+const themeStorageKey = 'web_scada_theme'
+const savedTheme = localStorage.getItem(themeStorageKey)
+const themeMode = ref<ThemeMode>(savedTheme === 'light' ? 'light' : 'dark')
+const naiveTheme = computed(() => themeMode.value === 'dark' ? darkTheme : null)
+const themeLabel = computed(() => themeMode.value === 'dark' ? '明亮模式' : '深色模式')
 const hmiEditorOpen = ref(false)
+const demoModalOpen = ref(false)
+const demoChannelName = ref('金斗河默认通道')
+const demoChannelMode = ref('SIMULATOR')
+const demoHost = ref('127.0.0.1')
+const demoPort = ref('1502')
+const demoInterval = ref('1000 ms')
+const demoTimeout = ref('1200 ms')
+const demoDescription = ref('这是通用弹窗的编辑表单示例，后续可复用到报警确认、规则维护、采集通道编辑和控制确认。')
+const demoChannelModeOptions = [
+  { label: '仿真模式', value: 'SIMULATOR' },
+  { label: '真实设备', value: 'REAL' },
+]
 
 type HealthComponent = { status?: string }
 type HealthPayload = { status?: string; components?: Record<string, HealthComponent> }
@@ -156,6 +181,7 @@ const savingDevice = ref(false)
 const savingPoint = ref(false)
 const editingDeviceId = ref<number | null>(null)
 const editingPointId = ref<number | null>(null)
+const deviceModalOpen = ref(false)
 const areaFilter = ref('')
 const statusFilter = ref('')
 const monitorAreaFilter = ref('')
@@ -188,6 +214,13 @@ const alarmDeviceCount = computed(() => devices.value.filter((device) => device.
 const deviceStatusOptions = computed(() => dictItems('device_status'))
 const deviceProtocolOptions = computed(() => dictItems('device_protocol'))
 const deviceTypeOptions = computed(() => dictItems('device_type'))
+const deviceStatusSelectOptions = computed(() => deviceStatusOptions.value.map((item) => ({ label: item.label, value: item.itemCode })))
+const deviceProtocolSelectOptions = computed(() => deviceProtocolOptions.value.map((item) => ({ label: item.label, value: item.itemCode })))
+const deviceTypeSelectOptions = computed(() => deviceTypeOptions.value.map((item) => ({ label: item.label, value: item.itemCode })))
+const deviceAreaSelectOptions = computed(() => areas.value.map((area) => ({ label: area.name, value: area.id })))
+const deviceAreaFilterOptions = computed(() => [{ label: '全部区域', value: '' }, ...areas.value.map((area) => ({ label: area.name, value: String(area.id) }))])
+const deviceStatusFilterOptions = computed(() => [{ label: '全部状态', value: '' }, ...deviceStatusOptions.value.map((item) => ({ label: item.label, value: item.itemCode }))])
+const deviceModalTitle = computed(() => editingDeviceId.value ? '编辑设备' : '新建设备')
 const pointDataTypeOptions = computed(() => dictItems('point_data_type'))
 const pointAccessModeOptions = computed(() => dictItems('point_access_mode'))
 const pointUnitOptions = computed(() => dictItems('point_unit'))
@@ -569,6 +602,10 @@ async function logout() {
   }
 }
 
+function toggleTheme() {
+  themeMode.value = themeMode.value === 'dark' ? 'light' : 'dark'
+}
+
 async function refreshMonitorPoints() {
   if (!monitorSelectedDevice.value) return
   const device = monitorSelectedDevice.value
@@ -933,14 +970,17 @@ function startCreateDevice() {
   editingDeviceId.value = null
   deviceForm.value = emptyDeviceForm()
   deviceForm.value.areaId = areas.value[0]?.id ?? null
+  deviceModalOpen.value = true
 }
 
 function startEditDevice(device: Device) {
   editingDeviceId.value = device.id
   deviceForm.value = { ...device }
+  deviceModalOpen.value = true
 }
 
 async function saveDevice() {
+  if (savingDevice.value) return
   savingDevice.value = true
   deviceError.value = ''
   try {
@@ -952,6 +992,7 @@ async function saveDevice() {
     }
     editingDeviceId.value = null
     deviceForm.value = emptyDeviceForm()
+    deviceModalOpen.value = false
     await loadDeviceData()
   } catch (error) {
     deviceError.value = error instanceof Error ? error.message : '设备保存失败'
@@ -1036,6 +1077,11 @@ watch([activeMenu, overviewTrendSeries, overviewRealtimeCount, totalPointCount],
   renderOverviewChart()
 })
 
+watch(themeMode, (mode) => {
+  localStorage.setItem(themeStorageKey, mode)
+  document.documentElement.dataset.theme = mode
+}, { immediate: true })
+
 watch(overviewScore, (score) => {
   animateOverviewScore(score)
 }, { immediate: true })
@@ -1071,7 +1117,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main v-if="!isAuthed" class="login-shell">
+  <main v-if="!isAuthed" class="login-shell" :data-theme="themeMode">
     <section class="login-panel" aria-labelledby="login-title">
       <div class="brand-block">
         <p class="eyebrow">WEB SCADA CONTROL CENTER</p>
@@ -1092,7 +1138,7 @@ onUnmounted(() => {
     </section>
   </main>
 
-  <main v-else :class="['app-shell', { 'sidebar-is-collapsed': sidebarCollapsed }]">
+  <main v-else :class="['app-shell', { 'sidebar-is-collapsed': sidebarCollapsed }]" :data-theme="themeMode">
     <aside class="sidebar" aria-label="后台菜单">
       <div class="product-mark">
         <span class="mark-grid" aria-hidden="true"><span></span></span>
@@ -1117,6 +1163,8 @@ onUnmounted(() => {
           <span class="user-chip">{{ displayName }}</span>
           <span class="health-pill"><span class="status-dot is-ok"></span> MySQL {{ dbStatus }}</span>
           <span class="health-pill"><span class="status-dot is-ok"></span> Redis {{ redisStatus }}</span>
+          <button class="ghost compact theme-switch" type="button" @click="toggleTheme">{{ themeLabel }}</button>
+          <button class="ghost compact" type="button" @click="demoModalOpen = true">弹窗示例</button>
           <button class="ghost compact" type="button" :disabled="checking" @click="checkBackend">刷新</button>
           <button class="ghost compact" type="button" @click="logout">退出</button>
         </div>
@@ -1194,12 +1242,14 @@ onUnmounted(() => {
       <section v-else-if="activeMenu === 'devices'" class="device-layout">
         <section class="panel page-panel">
           <div class="panel-head"><h3>设备台账</h3><span>{{ deviceLoading ? '加载中' : `${devices.length} 台设备` }}</span></div>
-          <div class="toolbar">
-            <label><span>区域</span><select v-model="areaFilter" @change="loadDeviceData"><option value="">全部区域</option><option v-for="area in areas" :key="area.id" :value="String(area.id)">{{ area.name }}</option></select></label>
-            <label><span>状态</span><select v-model="statusFilter" @change="loadDeviceData"><option value="">全部状态</option><option v-for="item in deviceStatusOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
-            <button class="ghost compact" type="button" @click="loadDeviceData">刷新</button>
-            <button class="primary compact" type="button" @click="startCreateDevice">新建设备</button>
-          </div>
+          <NConfigProvider :theme="naiveTheme">
+            <div class="toolbar device-toolbar">
+              <label><span>区域</span><NSelect v-model:value="areaFilter" :options="deviceAreaFilterOptions" @update:value="loadDeviceData" /></label>
+              <label><span>状态</span><NSelect v-model:value="statusFilter" :options="deviceStatusFilterOptions" @update:value="loadDeviceData" /></label>
+              <button class="ghost compact" type="button" @click="loadDeviceData">刷新</button>
+              <button class="primary compact" type="button" @click="startCreateDevice">新建设备</button>
+            </div>
+          </NConfigProvider>
           <p v-if="deviceError" class="form-error">{{ deviceError }}</p>
           <div class="table-wrap">
             <table>
@@ -1220,23 +1270,10 @@ onUnmounted(() => {
         </section>
 
         <aside class="panel side-panel">
-          <div class="panel-head"><h3>{{ editingDeviceId ? '编辑设备' : '设备维护' }}</h3><span>{{ selectedDevice?.name ?? '未选择' }}</span></div>
-          <form class="device-form" @submit.prevent="saveDevice">
-            <label><span>区域</span><select v-model.number="deviceForm.areaId"><option :value="null">请选择</option><option v-for="area in areas" :key="area.id" :value="area.id">{{ area.name }}</option></select></label>
-            <label><span>名称</span><input v-model="deviceForm.name" /></label>
-            <label><span>编码</span><input v-model="deviceForm.code" /></label>
-            <label><span>类型</span><select v-model="deviceForm.type"><option v-for="item in deviceTypeOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
-            <label><span>状态</span><select v-model="deviceForm.status"><option v-for="item in deviceStatusOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
-            <label><span>协议</span><select v-model="deviceForm.protocol"><option v-for="item in deviceProtocolOptions" :key="item.itemCode" :value="item.itemCode">{{ item.label }}</option></select></label>
-            <label><span>IP 地址</span><input v-model="deviceForm.ipAddress" /></label>
-            <label><span>端口</span><input v-model.number="deviceForm.port" type="number" /></label>
-            <label class="span-2"><span>说明</span><input v-model="deviceForm.description" /></label>
-            <button class="primary" type="submit" :disabled="savingDevice">{{ savingDevice ? '保存中' : editingDeviceId ? '保存修改' : '创建设备' }}</button>
-          </form>
-
+          <div class="panel-head"><h3>设备点位</h3><span>{{ selectedDevice?.name ?? '未选择' }}</span></div>
           <div class="point-list">
             <div class="panel-head">
-              <h3>设备点位</h3>
+              <button class="ghost compact" type="button" :disabled="!selectedDevice" @click="selectedDevice && startEditDevice(selectedDevice)">编辑设备</button>
               <button class="ghost compact" type="button" :disabled="!selectedDevice" @click="startCreatePoint">新增点位</button>
             </div>
             <form class="point-form" @submit.prevent="savePoint">
@@ -1406,6 +1443,66 @@ onUnmounted(() => {
 
       <section v-else class="empty-state"><p class="eyebrow">{{ activeItem.label }}</p><h3>{{ activeItem.label }}页面骨架已预留</h3><p>当前阶段已接入设备、区域和点位数据模型，后续可继续扩展实时采集、报警规则和历史数据。</p></section>
     </section>
+    <AppModal v-model="deviceModalOpen" :title="deviceModalTitle" :mode="editingDeviceId ? 'edit' : 'create'" tone="default" size="lg" :confirm-text="savingDevice ? '保存中' : editingDeviceId ? '保存修改' : '创建设备'" :theme-mode="themeMode" :close-on-confirm="false" @confirm="saveDevice">
+      <NConfigProvider :theme="naiveTheme">
+        <form class="modal-form-grid device-modal-form" @submit.prevent="saveDevice">
+          <label><span>所属区域</span><NSelect v-model:value="deviceForm.areaId" :options="deviceAreaSelectOptions" placeholder="请选择区域" clearable /></label>
+          <label><span>设备类型</span><NSelect v-model:value="deviceForm.type" :options="deviceTypeSelectOptions" placeholder="请选择类型" /></label>
+          <label><span>设备名称</span><NInput v-model:value="deviceForm.name" placeholder="请输入设备名称" /></label>
+          <label><span>设备编码</span><NInput v-model:value="deviceForm.code" placeholder="请输入唯一编码" /></label>
+          <label><span>运行状态</span><NSelect v-model:value="deviceForm.status" :options="deviceStatusSelectOptions" placeholder="请选择状态" /></label>
+          <label><span>通讯协议</span><NSelect v-model:value="deviceForm.protocol" :options="deviceProtocolSelectOptions" placeholder="请选择协议" /></label>
+          <label><span>IP 地址</span><NInput v-model:value="deviceForm.ipAddress" placeholder="127.0.0.1" /></label>
+          <label><span>端口</span><NInputNumber v-model:value="deviceForm.port" :min="1" :max="65535" :show-button="false" placeholder="1502" /></label>
+          <label class="span-2"><span>说明</span><NInput v-model:value="deviceForm.description" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" placeholder="请输入设备说明" /></label>
+          <button class="hidden-submit" type="submit" :disabled="savingDevice" aria-hidden="true" tabindex="-1"></button>
+        </form>
+      </NConfigProvider>
+    </AppModal>
+    <AppModal v-model="demoModalOpen" title="编辑采集通道" mode="edit" tone="default" size="lg" confirm-text="保存配置" :theme-mode="themeMode">
+      <NConfigProvider :theme="naiveTheme">
+        <NTabs type="line" animated class="modal-tabs">
+          <NTabPane name="basic" tab="基础信息">
+            <div class="modal-form-grid">
+              <label><span>通道名称</span><NInput v-model:value="demoChannelName" /></label>
+              <label><span>通道模式</span><NSelect v-model:value="demoChannelMode" :options="demoChannelModeOptions" /></label>
+              <label><span>设备编号</span><NInput value="JDH-PLC-01" /></label>
+              <label><span>所属区域</span><NInput value="金斗河现场" /></label>
+              <label class="span-2"><span>说明</span><NInput v-model:value="demoDescription" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" /></label>
+            </div>
+          </NTabPane>
+          <NTabPane name="connection" tab="通讯参数">
+            <div class="modal-form-grid">
+              <label><span>主机地址</span><NInput v-model:value="demoHost" /></label>
+              <label><span>端口</span><NInput v-model:value="demoPort" /></label>
+              <label><span>站号</span><NInput value="1" /></label>
+              <label><span>协议</span><NInput value="MODBUS_TCP" /></label>
+              <label><span>字节序</span><NSelect value="ABCD" :options="[{ label: 'ABCD', value: 'ABCD' }, { label: 'DCBA', value: 'DCBA' }]" /></label>
+              <label><span>连接策略</span><NSelect value="KEEP_ALIVE" :options="[{ label: '长连接', value: 'KEEP_ALIVE' }, { label: '按次连接', value: 'PER_POLL' }]" /></label>
+            </div>
+          </NTabPane>
+          <NTabPane name="collect" tab="采集策略">
+            <div class="modal-form-grid">
+              <label><span>采集周期</span><NInput v-model:value="demoInterval" /></label>
+              <label><span>超时时间</span><NInput v-model:value="demoTimeout" /></label>
+              <label><span>重试次数</span><NInput value="1" /></label>
+              <label><span>失败阈值</span><NInput value="3 次" /></label>
+              <label><span>历史采样</span><NSelect value="CHANGE" :options="[{ label: '变化写入', value: 'CHANGE' }, { label: '定时写入', value: 'INTERVAL' }]" /></label>
+              <label><span>质量策略</span><NSelect value="MARK_STALE" :options="[{ label: '超时标记 STALE', value: 'MARK_STALE' }, { label: '丢弃异常值', value: 'DROP_BAD' }]" /></label>
+            </div>
+          </NTabPane>
+          <NTabPane name="alarm" tab="报警联动">
+            <div class="modal-form-grid">
+              <label><span>离线报警</span><NSelect value="ON" :options="[{ label: '启用', value: 'ON' }, { label: '停用', value: 'OFF' }]" /></label>
+              <label><span>报警等级</span><NSelect value="中" :options="[{ label: '高', value: '高' }, { label: '中', value: '中' }, { label: '低', value: '低' }]" /></label>
+              <label><span>通知策略</span><NSelect value="DASHBOARD" :options="[{ label: '仅首页展示', value: 'DASHBOARD' }, { label: '首页 + 弹窗', value: 'POPUP' }]" /></label>
+              <label><span>恢复确认</span><NSelect value="NO" :options="[{ label: '不需要', value: 'NO' }, { label: '需要', value: 'YES' }]" /></label>
+              <label class="span-2"><span>报警模板</span><NInput value="采集通道 {channelName} 连续失败，请检查 PLC 网络与地址配置。" type="textarea" :autosize="{ minRows: 3, maxRows: 6 }" /></label>
+            </div>
+          </NTabPane>
+        </NTabs>
+      </NConfigProvider>
+    </AppModal>
   </main>
 </template>
 
