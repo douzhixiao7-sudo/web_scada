@@ -22,6 +22,8 @@ let clockTimer: ReturnType<typeof setInterval> | undefined
 type Kind = 'value' | 'lamp' | 'button' | 'text'
 type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding }
 type Document = { version: 1; items: Item[] }
+type ServerConfig = { document: Document; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
+type ServerRevision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
 const library: { kind: Kind; label: string; path: string }[] = [
   { kind: 'value', label: '数值显示', path: 'M4 5h16v14H4z M8 9h8 M8 13h4' },
   { kind: 'lamp', label: '状态指示灯', path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M9 12h6' },
@@ -44,6 +46,11 @@ const saved = ref(JSON.stringify(items.value))
 const dirty = computed(() => saved.value !== JSON.stringify(items.value))
 const past = ref<string[]>([])
 const future = ref<string[]>([])
+const serverDraftVersion = ref<number | null>(null)
+const publishedVersion = ref<number | null>(null)
+const versions = ref<ServerRevision[]>([])
+const selectedVersionId = ref<number | null>(null)
+const saving = ref(false)
 const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))].sort((a, b) => a - b))
 const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
 
@@ -289,27 +296,104 @@ function travel(redo = false) {
   items.value = JSON.parse(snapshot)
   void select()
 }
-function save() {
+function documentValue(): Document { return { version: 1, items: items.value } }
+function validDocument(value: unknown): value is Document {
+  if (!value || typeof value !== 'object') return false
+  const document = value as Document
+  return document.version === 1 && Array.isArray(document.items) && document.items.length <= 1000 && document.items.every((item: Item) =>
+    typeof item.id === 'string' && /^[a-zA-Z0-9-]+$/.test(item.id) && library.some(entry => entry.kind === item.kind) && typeof item.label === 'string' && item.label.length <= 80 &&
+    [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 && (item.binding === undefined || validBinding(item.binding))
+  ) && new Set(document.items.map((item: Item) => item.id)).size === document.items.length
+}
+function saveLocal(text = '已保存到当前浏览器') {
   try {
-    const document: Document = { version: 1, items: items.value }
-    localStorage.setItem(storageKey, JSON.stringify(document))
+    localStorage.setItem(storageKey, JSON.stringify(documentValue()))
     saved.value = JSON.stringify(items.value)
-    message.value = '已保存到当前浏览器 · ' + new Date().toLocaleTimeString()
+    message.value = text + ' · ' + new Date().toLocaleTimeString()
   } catch { message.value = '保存失败：浏览器存储不可用，请保留当前页面。' }
 }
-function load() {
+async function save() {
+  if (saving.value) return
+  const previousSaved = saved.value
+  saveLocal('正在保存服务端草稿')
+  saving.value = true
+  try {
+    const response = await props.read<ServerConfig>('/api/hmi/config/draft', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document: documentValue(), expectedDraftVersion: serverDraftVersion.value }),
+    })
+    serverDraftVersion.value = response.draftVersion
+    publishedVersion.value = response.publishedVersion
+    message.value = '服务端草稿已保存 · ' + new Date().toLocaleTimeString()
+  } catch (error) {
+    saved.value = previousSaved
+    message.value = `服务端保存失败，本地草稿已保留：${error instanceof Error ? error.message : '未知错误'}`
+  }
+  finally { saving.value = false }
+}
+async function loadVersions() {
+  versions.value = await props.read<ServerRevision[]>('/api/hmi/config/versions')
+  if (!versions.value.some(version => version.id === selectedVersionId.value)) selectedVersionId.value = versions.value[0]?.id ?? null
+}
+async function publish() {
+  if (saving.value) return
+  saving.value = true
+  try {
+    const revision = await props.read<ServerRevision>('/api/hmi/config/publish', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document: documentValue(), expectedDraftVersion: serverDraftVersion.value }),
+    })
+    const config = await props.read<ServerConfig>('/api/hmi/config/draft')
+    serverDraftVersion.value = config.draftVersion
+    publishedVersion.value = revision.version
+    saveLocal(`已发布 V${revision.version}`)
+    await loadVersions()
+  } catch (error) { message.value = `发布失败：${error instanceof Error ? error.message : '未知错误'}` }
+  finally { saving.value = false }
+}
+async function restoreVersion() {
+  if (!selectedVersionId.value || saving.value) return
+  saving.value = true
+  try {
+    const config = await props.read<ServerConfig>(`/api/hmi/config/versions/${selectedVersionId.value}/restore`, { method: 'POST' })
+    if (!validDocument(config.document)) throw new Error('服务端版本格式无效')
+    items.value = config.document.items
+    serverDraftVersion.value = config.draftVersion
+    publishedVersion.value = config.publishedVersion
+    past.value = []; future.value = []
+    void select()
+    saveLocal(`已恢复 V${versions.value.find(version => version.id === selectedVersionId.value)?.version} 到草稿`)
+  } catch (error) { message.value = `恢复失败：${error instanceof Error ? error.message : '未知错误'}` }
+  finally { saving.value = false }
+}
+function loadLocal() {
   try {
     const raw = localStorage.getItem(storageKey)
-    if (!raw) return
-    const document = JSON.parse(raw)
-    if (document.version !== 1 || !Array.isArray(document.items) || document.items.length > 1000 || !document.items.every((item: Item) =>
-      typeof item.id === 'string' && /^[a-zA-Z0-9-]+$/.test(item.id) && library.some(entry => entry.kind === item.kind) && typeof item.label === 'string' && item.label.length <= 80 &&
-      [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 && (item.binding === undefined || validBinding(item.binding))
-    ) || new Set(document.items.map((item: Item) => item.id)).size !== document.items.length) throw new Error('Invalid draft')
+    if (!raw) return false
+    const document = JSON.parse(raw) as Document
+    if (!validDocument(document)) throw new Error('Invalid draft')
     items.value = document.items
     saved.value = JSON.stringify(items.value)
     message.value = '已恢复本地草稿 · 只读绑定 / 控制未启用'
-  } catch { message.value = '草稿无法读取，原存储未覆盖。请检查后再保存。' }
+    return true
+  } catch { message.value = '本地草稿无法读取，原存储未覆盖。'; return false }
+}
+async function loadServer(hadLocal: boolean) {
+  try {
+    const config = await props.read<ServerConfig>('/api/hmi/config/draft')
+    if (!validDocument(config.document)) throw new Error('服务端草稿格式无效')
+    serverDraftVersion.value = config.draftVersion
+    publishedVersion.value = config.publishedVersion
+    if (config.document.items.length || !hadLocal) {
+      items.value = config.document.items
+      saved.value = JSON.stringify(items.value)
+      saveLocal('已加载服务端草稿')
+    } else {
+      saved.value = JSON.stringify(config.document.items)
+      message.value = '服务端草稿为空，已保留浏览器草稿；点击保存即可迁移到服务端。'
+    }
+    await loadVersions()
+  } catch (error) { message.value = `服务端草稿读取失败，继续使用本地草稿：${error instanceof Error ? error.message : '未知错误'}` }
 }
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
 function keydown(event: KeyboardEvent) {
@@ -330,21 +414,24 @@ function keydown(event: KeyboardEvent) {
     void nextTick(() => moveable.value?.updateRect())
   }
 }
-onMounted(() => { load(); clockTimer = setInterval(() => { now.value = Date.now() }, 1000); window.addEventListener('beforeunload', beforeUnload) })
-onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(clockTimer); if (dirty.value) save(); window.removeEventListener('beforeunload', beforeUnload) })
+onMounted(() => { const hadLocal = loadLocal(); void loadServer(hadLocal); clockTimer = setInterval(() => { now.value = Date.now() }, 1000); window.addEventListener('beforeunload', beforeUnload) })
+onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(clockTimer); if (dirty.value) saveLocal(); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 
 <template>
   <section class="editor" aria-label="组态编辑器" @keydown="keydown">
     <header class="editor-toolbar">
-      <strong>组态画布 <small>{{ dirty ? '未保存' : '本地草稿' }}</small></strong>
+      <strong>组态画布 <small>{{ dirty ? '未保存' : `服务端草稿 #${serverDraftVersion ?? '—'}` }} · 发布 {{ publishedVersion ? `V${publishedVersion}` : '无' }}</small></strong>
       <div class="editor-actions">
         <button :disabled="refreshing" @click="refreshReadings(true)">{{ refreshing ? '读取中' : '刷新数据' }}</button>
         <button :disabled="preview || !past.length" @click="travel()">撤销</button>
         <button :disabled="preview || !future.length" @click="travel(true)">重做</button>
         <label>缩放 <select v-model.number="zoom" @change="select([...selectedIds])"><option :value="0.5">50%</option><option :value="0.75">75%</option><option :value="1">100%</option><option :value="1.25">125%</option></select></label>
         <button @click="preview = !preview; select()">{{ preview ? '返回编辑' : '预览' }}</button>
-        <button class="save" @click="save">保存草稿</button>
+        <select v-model="selectedVersionId" aria-label="历史版本"><option :value="null">无历史版本</option><option v-for="version in versions" :key="version.id" :value="version.id">V{{ version.version }}{{ version.current ? ' · 当前发布' : '' }}</option></select>
+        <button :disabled="saving || !selectedVersionId" @click="restoreVersion">恢复到草稿</button>
+        <button :disabled="saving" class="save" @click="save">{{ saving ? '处理中' : '保存草稿' }}</button>
+        <button :disabled="saving" class="publish" @click="publish">发布版本</button>
       </div>
     </header>
     <div class="editor-workspace" :class="{ preview }">
@@ -426,7 +513,7 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-toolbar { justify-content:space-between; flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid var(--line); }
 .editor strong { font-size:14px; }.editor small,.editor p { color:var(--muted); font-size:12px; }.editor-toolbar small { margin-left:12px; font-weight:400; }
 .editor button,.editor input,.editor select { font:inherit; font-size:13px; color:inherit; background:#1a2a3b; border:1px solid var(--line); border-radius:3px; padding:7px 10px; min-width:0; }
-.editor button { cursor:pointer; }.editor button:hover:not(:disabled),.editor button.chosen { border-color:var(--accent); background:#243c53; }.editor button:disabled { opacity:.5; cursor:default; }.editor :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }.editor .save { border-color:#669ccc; }.editor-actions label { white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:12px; }
+.editor button { cursor:pointer; }.editor button:hover:not(:disabled),.editor button.chosen { border-color:var(--accent); background:#243c53; }.editor button:disabled { opacity:.5; cursor:default; }.editor :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }.editor .save { border-color:#669ccc; }.editor .publish { border-color:#55a989; background:#1a3a36; }.editor-actions label { white-space:nowrap; display:flex; align-items:center; gap:6px; font-size:12px; }
 .editor-workspace { display:grid; grid-template-columns:156px minmax(0,1fr) 208px; min-height:540px; }.editor-workspace.preview { grid-template-columns:minmax(0,1fr); }.editor-library,.editor-properties { padding:14px 12px; max-height:650px; overflow:auto; }.editor-library { border-right:1px solid var(--line); }.editor-properties { border-left:1px solid var(--line); }.editor h3 { font-size:13px; margin:0 0 14px; }.editor h3:not(:first-child) { margin-top:24px; }.editor-library button { display:flex; gap:8px; align-items:center; width:100%; text-align:left; margin-bottom:8px; overflow:hidden; overflow-wrap:anywhere; }.editor svg { width:18px; height:18px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.5; }.editor p { line-height:1.7; }
 .editor-viewport { overflow:auto; padding:24px; background:#0c141e; min-width:0; max-height:650px; }.editor-stage { position:relative; width:1200px; height:720px; transform-origin:top left; background-color:#152231; background-image:radial-gradient(#33475b 1px,transparent 1px); background-size:8px 8px; }.editor-stage.is-preview { background-image:none; }.editor-empty { position:absolute; top:40%; width:100%; text-align:center; pointer-events:none; }
 .editor-item { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:8px; box-sizing:border-box; border:1px solid transparent; user-select:none; overflow:hidden; overflow-wrap:anywhere; }.editor-item.selected { border-color:var(--accent); }.editor-item.value { flex-wrap:wrap; background:#1c2d3e; }.editor-item.value strong { font-size:24px; }.editor-item.value span { width:100%; font-size:14px; }.editor-item.lamp i { width:14px; height:14px; background:#8392a3; border-radius:50%; flex-shrink:0; }.editor-item button { width:100%; height:100%; pointer-events:none; }.editor-item.text { justify-content:flex-start; }.editor-properties label { display:grid; gap:6px; font-size:12px; margin-bottom:12px; }.editor-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor input { width:100%; box-sizing:border-box; }.editor footer { justify-content:space-between; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }

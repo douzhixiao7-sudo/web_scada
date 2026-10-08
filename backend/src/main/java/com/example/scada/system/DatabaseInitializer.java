@@ -281,6 +281,32 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_history_quality(quality)
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_hmi_config (
+                    id bigint primary key,
+                    draft_json mediumtext not null,
+                    draft_version bigint not null default 0,
+                    published_revision_id bigint null,
+                    updated_by varchar(64) not null default '',
+                    updated_at timestamp not null default current_timestamp on update current_timestamp
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_hmi_revision (
+                    id bigint primary key auto_increment,
+                    config_id bigint not null,
+                    version_no int not null,
+                    content_json mediumtext not null,
+                    published_by varchar(64) not null default '',
+                    created_at timestamp not null default current_timestamp,
+                    unique key uk_scada_hmi_revision_version(config_id, version_no),
+                    index idx_scada_hmi_revision_config(config_id)
+                )
+                """);
+        jdbcTemplate.update("""
+                insert ignore into scada_hmi_config(id, draft_json)
+                values (1, '{"version":1,"items":[]}')
+                """);
         addColumnIfMissing("scada_collect_channel", "channel_mode", "varchar(32) not null default 'SIMULATOR'");
         addColumnIfMissing("scada_collect_channel", "slave_id", "int not null default 1");
         addColumnIfMissing("scada_collect_channel", "timeout_ms", "int not null default 1200");
