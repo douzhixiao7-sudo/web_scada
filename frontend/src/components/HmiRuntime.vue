@@ -4,7 +4,8 @@ import { readState, validBinding, type LiveValue, type ReadBinding } from './hmi
 
 const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
 type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe'
-type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean }
+type ItemStyle = { fill: string; stroke: string; strokeWidth: number; textColor: string }
+type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean; style?: ItemStyle; route?: 'horizontal' | 'vertical' | 'elbow'; reversed?: boolean }
 type Document = { version: 1; items: Item[] }
 type Revision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
 
@@ -23,6 +24,15 @@ let generation = 0
 
 const items = computed(() => revision.value?.document.items ?? [])
 const deviceIds = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))])
+const defaultStyle: ItemStyle = { fill: '#253f53', stroke: '#82a9c8', strokeWidth: 2, textColor: '#a9bed0' }
+function itemStyle(item: Item) { return { ...defaultStyle, ...item.style } }
+function pathPoints(item: Item) {
+  const horizontal = `4,${item.height / 2} ${item.width - 10},${item.height / 2}`
+  const vertical = `${item.width / 2},4 ${item.width / 2},${item.height - 10}`
+  const elbow = `4,4 ${item.width / 2},4 ${item.width / 2},${item.height - 6} ${item.width - 10},${item.height - 6}`
+  const points = (item.route === 'vertical' ? vertical : item.route === 'elbow' ? elbow : horizontal).split(' ')
+  return (item.reversed ? points.reverse() : points).join(' ')
+}
 
 function validDocument(value: unknown): value is Document {
   if (!value || typeof value !== 'object') return false
@@ -32,6 +42,8 @@ function validDocument(value: unknown): value is Document {
     [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 &&
     item.x + item.width <= 1200 && item.y + item.height <= 720 &&
     (item.groupId === undefined || /^[a-zA-Z0-9-]+$/.test(item.groupId)) && (item.locked === undefined || typeof item.locked === 'boolean') &&
+    (item.style === undefined || (/^#[0-9a-fA-F]{6}$/.test(item.style.fill) && /^#[0-9a-fA-F]{6}$/.test(item.style.stroke) && /^#[0-9a-fA-F]{6}$/.test(item.style.textColor) && Number.isFinite(item.style.strokeWidth) && item.style.strokeWidth >= 1 && item.style.strokeWidth <= 12)) &&
+    (item.route === undefined || ['horizontal', 'vertical', 'elbow'].includes(item.route)) && (item.reversed === undefined || typeof item.reversed === 'boolean') &&
     (item.binding === undefined || validBinding(item.binding)))
 }
 
@@ -118,11 +130,19 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
     <div v-else ref="viewport" class="runtime-viewport">
       <div :style="{ width: `${1200 * scale}px`, height: `${720 * scale}px` }">
         <div class="runtime-stage" :style="{ transform: `scale(${scale})` }">
-          <div v-for="item in items" :key="item.id" class="runtime-item" :class="item.kind" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }">
+          <div v-for="item in items" :key="item.id" class="runtime-item" :class="item.kind" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px`, color: itemStyle(item).textColor, backgroundColor: item.kind === 'rectangle' || item.kind === 'ellipse' ? itemStyle(item).fill : undefined, borderColor: item.kind === 'rectangle' || item.kind === 'ellipse' ? itemStyle(item).stroke : undefined, borderWidth: item.kind === 'rectangle' || item.kind === 'ellipse' ? `${itemStyle(item).strokeWidth}px` : undefined }">
             <template v-if="item.kind === 'value'"><span>{{ item.label }}</span><strong>{{ reading(item).text }}</strong><small :class="{ error: reading(item).status !== '正常' }" :title="reading(item).time">{{ reading(item).status }}</small></template>
             <template v-else-if="item.kind === 'lamp'"><i :class="{ active: reading(item).active, idle: reading(item).status === '正常' && !reading(item).active }"></i><span>{{ item.label }}</span><small :title="reading(item).time">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small></template>
             <button v-else-if="item.kind === 'button'" type="button" disabled :title="'控制未启用'">{{ item.label }}</button>
             <span v-else-if="item.kind === 'text'">{{ item.label }}</span>
+            <template v-else-if="item.kind === 'line' || item.kind === 'pipe'">
+              <svg class="process-path" :viewBox="`0 0 ${item.width} ${item.height}`" preserveAspectRatio="none" aria-hidden="true">
+                <defs><marker :id="`runtime-arrow-${item.id}`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" :fill="itemStyle(item).stroke" /></marker></defs>
+                <polyline v-if="item.kind === 'pipe'" :points="pathPoints(item)" fill="none" :stroke="itemStyle(item).stroke" :stroke-width="itemStyle(item).strokeWidth + 6" stroke-linecap="square" stroke-linejoin="round" />
+                <polyline :points="pathPoints(item)" fill="none" :stroke="item.kind === 'pipe' ? itemStyle(item).fill : itemStyle(item).stroke" :stroke-width="itemStyle(item).strokeWidth" stroke-linecap="square" stroke-linejoin="round" :marker-end="`url(#runtime-arrow-${item.id})`" />
+              </svg>
+              <span class="shape-label">{{ item.label }}</span>
+            </template>
             <span v-else class="shape-label">{{ item.label }}</span>
           </div>
         </div>
@@ -143,6 +163,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .runtime-item.value { flex-wrap:wrap; background:#1c2d3e; border:1px solid #354a5e; }.runtime-item.value span { width:100%; font-size:14px; }.runtime-item.value strong { font-size:24px; }.runtime-item small { color:#9fb0c1; font-size:12px; }.runtime-item small.error { color:#e9b479; }
 .runtime-item.lamp i { width:14px; height:14px; flex-shrink:0; border-radius:50%; background:#7d8fa1; }.runtime-item.lamp i.active { background:#55be96; box-shadow:0 0 0 3px rgba(85,190,150,.14); }.runtime-item.lamp i.idle { background:#8095ac; }
 .runtime-item button { width:100%; height:100%; color:#9fb0c1; background:#1a2a3b; border:1px solid #354a5e; border-radius:3px; }.runtime-item.text { justify-content:flex-start; }
-.runtime-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.runtime-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.runtime-item.line,.runtime-item.pipe { padding:0; overflow:visible; }.runtime-item.line::before { content:''; width:100%; border-top:2px solid #82a9c8; }.runtime-item.line::after { content:''; position:absolute; right:0; border-left:9px solid #82a9c8; border-top:5px solid transparent; border-bottom:5px solid transparent; }.runtime-item.pipe::before { content:''; width:100%; height:10px; box-sizing:border-box; border-top:2px solid #6289a8; border-bottom:2px solid #6289a8; background:#253f53; }.runtime-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:#a9bed0; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }
+.runtime-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.runtime-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.runtime-item.line,.runtime-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.runtime-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }
 .runtime-state { min-height:360px; display:grid; place-content:center; gap:8px; text-align:center; color:#93a8bb; }.runtime-state strong { color:#dce7f0; font-size:16px; }
 </style>

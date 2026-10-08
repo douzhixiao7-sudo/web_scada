@@ -20,7 +20,8 @@ let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
 
 type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe'
-type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean }
+type ItemStyle = { fill: string; stroke: string; strokeWidth: number; textColor: string }
+type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean; style?: ItemStyle; route?: 'horizontal' | 'vertical' | 'elbow'; reversed?: boolean }
 type Document = { version: 1; items: Item[] }
 type ServerConfig = { document: Document; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
 type ServerRevision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
@@ -57,6 +58,15 @@ const selectedVersionId = ref<number | null>(null)
 const saving = ref(false)
 const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))].sort((a, b) => a - b))
 const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
+const defaultStyle: ItemStyle = { fill: '#253f53', stroke: '#82a9c8', strokeWidth: 2, textColor: '#a9bed0' }
+function itemStyle(item: Item) { return { ...defaultStyle, ...item.style } }
+function pathPoints(item: Item) {
+  const horizontal = `4,${item.height / 2} ${item.width - 10},${item.height / 2}`
+  const vertical = `${item.width / 2},4 ${item.width / 2},${item.height - 10}`
+  const elbow = `4,4 ${item.width / 2},4 ${item.width / 2},${item.height - 6} ${item.width - 10},${item.height - 6}`
+  const points = (item.route === 'vertical' ? vertical : item.route === 'elbow' ? elbow : horizontal).split(' ')
+  return (item.reversed ? points.reverse() : points).join(' ')
+}
 
 async function refreshReadings(forceCatalog = false) {
   if (!props.active || refreshing.value) return
@@ -243,7 +253,7 @@ function add(kind: Kind, x?: number, y?: number) {
   const left = x ?? 80 + cascade
   const top = y ?? 80 + cascade
   const compact = kind === 'line' || kind === 'pipe'
-  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : 160, height: compact ? 40 : 80 }
+  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : 160, height: compact ? 40 : 80, style: { ...defaultStyle }, route: compact ? 'horizontal' : undefined }
   items.value.push(item)
   void select(item.id)
 }
@@ -265,6 +275,21 @@ function update(field: 'x' | 'y' | 'width' | 'height' | 'label', event: Event) {
     selected.value[field] = Math.max(field === 'width' || field === 'height' ? 40 : 0, Math.min(max, number))
   }
   void nextTick(() => moveable.value?.updateRect())
+}
+function updateStyle(field: keyof ItemStyle, event: Event) {
+  if (!selected.value || selected.value.locked) return
+  const value = (event.target as HTMLInputElement).value
+  checkpoint()
+  const style = itemStyle(selected.value)
+  if (field === 'strokeWidth') style.strokeWidth = Math.max(1, Math.min(12, Number(value) || 1))
+  else style[field] = value
+  selected.value.style = style
+}
+function updatePath(field: 'route' | 'reversed', event: Event) {
+  if (!selected.value || selected.value.locked || (selected.value.kind !== 'line' && selected.value.kind !== 'pipe')) return
+  checkpoint()
+  if (field === 'route') selected.value.route = (event.target as HTMLSelectElement).value as Item['route']
+  else selected.value.reversed = (event.target as HTMLInputElement).checked || undefined
 }
 function remove() {
   if (!selection.value.length || preview.value || selection.value.some(item => item.locked)) return
@@ -333,7 +358,9 @@ function validDocument(value: unknown): value is Document {
   return document.version === 1 && Array.isArray(document.items) && document.items.length <= 1000 && document.items.every((item: Item) =>
     typeof item.id === 'string' && /^[a-zA-Z0-9-]+$/.test(item.id) && library.some(entry => entry.kind === item.kind) && typeof item.label === 'string' && item.label.length <= 80 &&
     [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 &&
-    (item.groupId === undefined || /^[a-zA-Z0-9-]+$/.test(item.groupId)) && (item.locked === undefined || typeof item.locked === 'boolean') && (item.binding === undefined || validBinding(item.binding))
+    (item.groupId === undefined || /^[a-zA-Z0-9-]+$/.test(item.groupId)) && (item.locked === undefined || typeof item.locked === 'boolean') &&
+    (item.style === undefined || (/^#[0-9a-fA-F]{6}$/.test(item.style.fill) && /^#[0-9a-fA-F]{6}$/.test(item.style.stroke) && /^#[0-9a-fA-F]{6}$/.test(item.style.textColor) && Number.isFinite(item.style.strokeWidth) && item.style.strokeWidth >= 1 && item.style.strokeWidth <= 12)) &&
+    (item.route === undefined || ['horizontal', 'vertical', 'elbow'].includes(item.route)) && (item.reversed === undefined || typeof item.reversed === 'boolean') && (item.binding === undefined || validBinding(item.binding))
   ) && new Set(document.items.map((item: Item) => item.id)).size === document.items.length
 }
 function configUrl(path: string) { return `/api/hmi/config/${path}?screenId=${props.screenId}` }
@@ -492,11 +519,19 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         <div :style="{ width: `${1200 * zoom}px`, height: `${720 * zoom}px` }">
           <div ref="stage" class="editor-stage" :class="{ 'is-preview': preview }" :style="{ transform: `scale(${zoom})` }" tabindex="0" aria-label="编辑画布">
             <p v-if="!items.length" class="editor-empty">从左侧添加第一个组件</p>
-            <div v-for="item in items" :key="item.id" :data-item-id="item.id" class="editor-item" :class="[item.kind, { selected: selectedIds.includes(item.id) && !preview, locked: item.locked }]" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }" :tabindex="preview ? -1 : 0" :aria-label="`${item.label}${item.locked ? '（已锁定）' : ''}`" @keydown.enter.prevent="!preview && pick(item.id, $event.shiftKey)" @keydown.space.prevent="!preview && pick(item.id, $event.shiftKey)">
+            <div v-for="item in items" :key="item.id" :data-item-id="item.id" class="editor-item" :class="[item.kind, { selected: selectedIds.includes(item.id) && !preview, locked: item.locked }]" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px`, color: itemStyle(item).textColor, backgroundColor: item.kind === 'rectangle' || item.kind === 'ellipse' ? itemStyle(item).fill : undefined, borderColor: item.kind === 'rectangle' || item.kind === 'ellipse' ? itemStyle(item).stroke : undefined, borderWidth: item.kind === 'rectangle' || item.kind === 'ellipse' ? `${itemStyle(item).strokeWidth}px` : undefined }" :tabindex="preview ? -1 : 0" :aria-label="`${item.label}${item.locked ? '（已锁定）' : ''}`" @keydown.enter.prevent="!preview && pick(item.id, $event.shiftKey)" @keydown.space.prevent="!preview && pick(item.id, $event.shiftKey)">
               <template v-if="item.kind === 'value'"><span>{{ item.label }}</span><strong>{{ reading(item).text }}</strong><small :class="{ 'read-error': reading(item).status !== '正常' }" :title="reading(item).time">{{ reading(item).status }}</small></template>
               <template v-else-if="item.kind === 'lamp'"><i :class="{ 'lamp-active': reading(item).active, 'lamp-idle': reading(item).status === '正常' && !reading(item).active }"></i><span>{{ item.label }}</span><small :title="reading(item).time">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small></template>
               <button v-else-if="item.kind === 'button'" disabled>{{ item.label }}</button>
               <span v-else-if="item.kind === 'text'">{{ item.label }}</span>
+              <template v-else-if="item.kind === 'line' || item.kind === 'pipe'">
+                <svg class="process-path" :viewBox="`0 0 ${item.width} ${item.height}`" preserveAspectRatio="none" aria-hidden="true">
+                  <defs><marker :id="`arrow-${item.id}`" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" :fill="itemStyle(item).stroke" /></marker></defs>
+                  <polyline v-if="item.kind === 'pipe'" :points="pathPoints(item)" fill="none" :stroke="itemStyle(item).stroke" :stroke-width="itemStyle(item).strokeWidth + 6" stroke-linecap="square" stroke-linejoin="round" />
+                  <polyline :points="pathPoints(item)" fill="none" :stroke="item.kind === 'pipe' ? itemStyle(item).fill : itemStyle(item).stroke" :stroke-width="itemStyle(item).strokeWidth" stroke-linecap="square" stroke-linejoin="round" :marker-end="`url(#arrow-${item.id})`" />
+                </svg>
+                <span class="shape-label">{{ item.label }}</span>
+              </template>
               <span v-else class="shape-label">{{ item.label }}</span>
             </div>
             <!-- Viewport-positioned marquee must not inherit the canvas transform. -->
@@ -531,6 +566,15 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
             </template>
           </template>
           <p v-else>{{ selected.kind === 'button' ? '控制未启用，不下发设备命令。' : ['rectangle', 'ellipse', 'line', 'pipe'].includes(selected.kind) ? '工业基础图元，不绑定点位。' : '静态文字，不绑定点位。' }}</p>
+          <template v-if="['rectangle', 'ellipse', 'line', 'pipe', 'text'].includes(selected.kind)">
+            <h3>外观</h3>
+            <div class="editor-color-fields"><label>填充<input type="color" :disabled="selected.locked" :value="itemStyle(selected).fill" @input="updateStyle('fill', $event)" /></label><label>边框 / 线<input type="color" :disabled="selected.locked" :value="itemStyle(selected).stroke" @input="updateStyle('stroke', $event)" /></label><label>文字<input type="color" :disabled="selected.locked" :value="itemStyle(selected).textColor" @input="updateStyle('textColor', $event)" /></label><label>线宽<input type="number" min="1" max="12" :disabled="selected.locked" :value="itemStyle(selected).strokeWidth" @input="updateStyle('strokeWidth', $event)" /></label></div>
+          </template>
+          <template v-if="selected.kind === 'line' || selected.kind === 'pipe'">
+            <h3>路径</h3>
+            <label>走向<select :disabled="selected.locked" :value="selected.route ?? 'horizontal'" @change="updatePath('route', $event)"><option value="horizontal">水平</option><option value="vertical">垂直</option><option value="elbow">正交折线</option></select></label>
+            <label class="editor-check"><input type="checkbox" :disabled="selected.locked" :checked="selected.reversed" @change="updatePath('reversed', $event)" />反转方向</label>
+          </template>
           <p v-if="catalogError" class="read-error" role="alert">{{ catalogError }}</p>
         </template>
         <p v-else-if="selection.length">已选择 {{ selection.length }} 个组件，可批量移动、对齐和调整图层。</p>
@@ -564,6 +608,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-workspace { display:grid; grid-template-columns:156px minmax(0,1fr) 208px; min-height:540px; }.editor-workspace.preview { grid-template-columns:minmax(0,1fr); }.editor-library,.editor-properties { padding:14px 12px; max-height:650px; overflow:auto; }.editor-library { border-right:1px solid var(--line); }.editor-properties { border-left:1px solid var(--line); }.editor h3 { font-size:13px; margin:0 0 14px; }.editor h3:not(:first-child) { margin-top:24px; }.editor-library button { display:flex; gap:8px; align-items:center; width:100%; text-align:left; margin-bottom:8px; overflow:hidden; overflow-wrap:anywhere; }.editor svg { width:18px; height:18px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.5; }.editor p { line-height:1.7; }
 .editor-viewport { overflow:auto; padding:24px; background:#0c141e; min-width:0; max-height:650px; }.editor-stage { position:relative; width:1200px; height:720px; transform-origin:top left; background-color:#152231; background-image:radial-gradient(#33475b 1px,transparent 1px); background-size:8px 8px; }.editor-stage.is-preview { background-image:none; }.editor-empty { position:absolute; top:40%; width:100%; text-align:center; pointer-events:none; }
 .editor-item { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:8px; box-sizing:border-box; border:1px solid transparent; user-select:none; overflow:hidden; overflow-wrap:anywhere; }.editor-item.selected { border-color:var(--accent); }.editor-item.value { flex-wrap:wrap; background:#1c2d3e; }.editor-item.value strong { font-size:24px; }.editor-item.value span { width:100%; font-size:14px; }.editor-item.lamp i { width:14px; height:14px; background:#8392a3; border-radius:50%; flex-shrink:0; }.editor-item button { width:100%; height:100%; pointer-events:none; }.editor-item.text { justify-content:flex-start; }.editor-properties label { display:grid; gap:6px; font-size:12px; margin-bottom:12px; }.editor-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor input { width:100%; box-sizing:border-box; }.editor footer { justify-content:space-between; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
-.editor-item.rectangle { background:rgba(42,67,88,.34); border-color:#54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.editor-item.line::before { content:''; width:100%; border-top:2px solid #82a9c8; }.editor-item.line::after { content:''; position:absolute; right:0; border-left:9px solid #82a9c8; border-top:5px solid transparent; border-bottom:5px solid transparent; }.editor-item.pipe::before { content:''; width:100%; height:10px; box-sizing:border-box; border-top:2px solid #6289a8; border-bottom:2px solid #6289a8; background:#253f53; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:#a9bed0; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }
+.editor-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }.editor-color-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor-color-fields input[type='color'] { height:32px; padding:3px; }.editor-check { display:flex!important; grid-template-columns:18px 1fr; align-items:center; }.editor-check input { width:auto; }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>

@@ -263,6 +263,15 @@ public class HmiService {
         if (groupId != null && (!groupId.isTextual() || !ITEM_ID.matcher(groupId.asText()).matches())) throw new IllegalArgumentException("组态组件分组格式无效");
         JsonNode locked = item.get("locked");
         if (locked != null && !locked.isBoolean()) throw new IllegalArgumentException("组态组件锁定格式无效");
+        JsonNode style = item.get("style");
+        if (style != null && (!style.isObject() || !color(style, "fill") || !color(style, "stroke") || !color(style, "textColor") ||
+                !style.path("strokeWidth").isNumber() || style.path("strokeWidth").asDouble() < 1 || style.path("strokeWidth").asDouble() > 12)) {
+            throw new IllegalArgumentException("组态组件样式格式无效");
+        }
+        JsonNode route = item.get("route");
+        if (route != null && (!route.isTextual() || !Set.of("horizontal", "vertical", "elbow").contains(route.asText()))) throw new IllegalArgumentException("组态路径格式无效");
+        JsonNode reversed = item.get("reversed");
+        if (reversed != null && !reversed.isBoolean()) throw new IllegalArgumentException("组态路径方向格式无效");
         JsonNode binding = item.get("binding");
         if (binding != null && (!binding.isObject() || binding.path("deviceId").asLong(0) <= 0 ||
                 (!binding.path("pointId").isNull() && binding.path("pointId").asLong(0) <= 0) ||
@@ -276,6 +285,11 @@ public class HmiService {
         JsonNode value = node.get(field);
         if (value == null || !value.isNumber() || !Double.isFinite(value.asDouble())) throw new IllegalArgumentException("组态组件坐标无效");
         return value.asDouble();
+    }
+
+    private boolean color(JsonNode node, String field) {
+        JsonNode value = node.get(field);
+        return value != null && value.isTextual() && value.asText().matches("#[0-9a-fA-F]{6}");
     }
 
     private JsonNode parse(String json) {
