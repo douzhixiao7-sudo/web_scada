@@ -8,7 +8,7 @@ import HmiIndustrialImage from './HmiIndustrialImage.vue'
 
 const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
 type ReadDevice = { id: number; name: string }
-type ReadPoint = { id: number; deviceId: number; name: string; unit: string; accessMode: string }
+type ReadPoint = { id: number; deviceId: number; name: string; code: string; unit: string; accessMode: string }
 const readDevices = ref<ReadDevice[]>([])
 const pointsByDevice = ref<Record<number, ReadPoint[]>>({})
 const liveByDevice = ref<Record<number, LiveValue[]>>({})
@@ -71,6 +71,9 @@ const templateEditingId = ref<number | null>(null)
 const templateDeleteConfirmId = ref<number | null>(null)
 const templateBusy = ref(false)
 const templateError = ref('')
+const mappingTemplate = ref<HmiTemplate | null>(null)
+const templateDeviceMap = ref<Record<number, number>>({})
+const mappingBusy = ref(false)
 const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))].sort((a, b) => a - b))
 const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
 const defaultStyle: ItemStyle = { fill: '#253f53', stroke: '#82a9c8', strokeWidth: 2, textColor: '#a9bed0' }
@@ -79,6 +82,16 @@ const filteredTemplates = computed(() => {
   const keyword = templateSearch.value.trim().toLocaleLowerCase()
   return keyword ? templates.value.filter(template => template.name.toLocaleLowerCase().includes(keyword) || templateCategory(template).includes(keyword)) : templates.value
 })
+const mappingRows = computed(() => {
+  if (!mappingTemplate.value) return []
+  return [...new Set(mappingTemplate.value.document.items.flatMap(item => item.binding ? [item.binding.deviceId] : []))].map(sourceId => {
+    const targetId = templateDeviceMap.value[sourceId] ?? sourceId
+    const bindings = mappingTemplate.value!.document.items.flatMap(item => item.binding?.deviceId === sourceId ? [item.binding] : [])
+    const matched = bindings.filter(binding => mappedPoint(sourceId, binding.pointId, targetId)).length
+    return { sourceId, targetId, sourceName: readDevices.value.find(device => device.id === sourceId)?.name ?? `设备 #${sourceId}`, total: bindings.length, matched }
+  })
+})
+const mappingReady = computed(() => mappingRows.value.length > 0 && mappingRows.value.every(row => row.matched === row.total))
 function industrialAsset(kind: Kind) { return `/assets/hmi/industrial/${kind}.png` }
 function templateCategory(template: HmiTemplate) {
   const kinds = new Set(template.document.items.map(item => item.kind))
@@ -390,6 +403,25 @@ async function loadTemplates() {
   try { templates.value = await props.read<HmiTemplate[]>('/api/hmi/templates'); templateError.value = '' }
   catch (error) { templateError.value = error instanceof Error ? error.message : '模板读取失败' }
 }
+async function loadDevicePoints(deviceId: number) {
+  if (!pointsByDevice.value[deviceId]) pointsByDevice.value[deviceId] = await props.read<ReadPoint[]>(`/api/points?deviceId=${deviceId}`, { signal: AbortSignal.timeout(8000) })
+}
+function mappedPoint(sourceDeviceId: number, sourcePointId: number | null, targetDeviceId: number) {
+  if (!sourcePointId) return null
+  const source = pointsByDevice.value[sourceDeviceId]?.find(point => point.id === sourcePointId)
+  if (!source) return null
+  if (sourceDeviceId === targetDeviceId) return source
+  const code = source.code?.trim().toLocaleLowerCase()
+  const targets = pointsByDevice.value[targetDeviceId] ?? []
+  const exact = targets.find(point => code && point.code?.trim().toLocaleLowerCase() === code) ?? targets.find(point => point.name.trim().toLocaleLowerCase() === source.name.trim().toLocaleLowerCase())
+  if (exact) return exact
+  const normalizedCode = code?.replace(/\d+/g, '#')
+  const normalizedName = source.name.trim().toLocaleLowerCase().replace(/\d+\s*#/g, '').replace(/\d+/g, '#')
+  const codeMatches = targets.filter(point => normalizedCode && point.code?.trim().toLocaleLowerCase().replace(/\d+/g, '#') === normalizedCode)
+  if (codeMatches.length === 1) return codeMatches[0]
+  const nameMatches = targets.filter(point => point.name.trim().toLocaleLowerCase().replace(/\d+\s*#/g, '').replace(/\d+/g, '#') === normalizedName)
+  return nameMatches.length === 1 ? nameMatches[0] : null
+}
 function templateDocument(): Document {
   const left = Math.min(...selection.value.map(item => item.x))
   const top = Math.min(...selection.value.map(item => item.y))
@@ -405,8 +437,22 @@ async function createTemplate() {
   } catch (error) { templateError.value = error instanceof Error ? error.message : '模板保存失败' }
   finally { templateBusy.value = false }
 }
-function addTemplate(template: HmiTemplate) {
+async function addTemplate(template: HmiTemplate) {
   if (preview.value || !validDocument(template.document)) return
+  const sourceIds = [...new Set(template.document.items.flatMap(item => item.binding ? [item.binding.deviceId] : []))]
+  if (sourceIds.length) {
+    mappingBusy.value = true; templateError.value = ''
+    try {
+      await Promise.all(sourceIds.map(loadDevicePoints))
+      templateDeviceMap.value = Object.fromEntries(sourceIds.map(id => [id, id]))
+      mappingTemplate.value = template
+    } catch (error) { templateError.value = error instanceof Error ? error.message : '模板点位读取失败' }
+    finally { mappingBusy.value = false }
+    return
+  }
+  instantiateTemplate(template)
+}
+function instantiateTemplate(template: HmiTemplate, deviceMap: Record<number, number> = {}) {
   checkpoint()
   const groupIds = new Map<string, string>()
   const cascade = (items.value.length % 8) * 16
@@ -414,11 +460,35 @@ function addTemplate(template: HmiTemplate) {
   const height = Math.max(...template.document.items.map(item => item.y + item.height))
   const left = Math.min(1200 - width, 80 + cascade)
   const top = Math.min(720 - height, 80 + cascade)
-  const copies = template.document.items.map(source => ({ ...JSON.parse(JSON.stringify(source)), id: crypto.randomUUID(), groupId: source.groupId ? groupIds.get(source.groupId) ?? (() => { const id = crypto.randomUUID(); groupIds.set(source.groupId!, id); return id })() : undefined, locked: undefined, x: source.x + left, y: source.y + top }))
+  const copies = template.document.items.map(source => {
+    const copy: Item = { ...JSON.parse(JSON.stringify(source)), id: crypto.randomUUID(), groupId: source.groupId ? groupIds.get(source.groupId) ?? (() => { const id = crypto.randomUUID(); groupIds.set(source.groupId!, id); return id })() : undefined, locked: undefined, x: source.x + left, y: source.y + top }
+    if (copy.binding) {
+      const sourceDeviceId = copy.binding.deviceId
+      const targetDeviceId = deviceMap[sourceDeviceId] ?? sourceDeviceId
+      const target = mappedPoint(sourceDeviceId, copy.binding.pointId, targetDeviceId)
+      copy.binding = { ...copy.binding, deviceId: targetDeviceId, pointId: target?.id ?? null, unit: target?.unit?.slice(0, 40) ?? copy.binding.unit }
+    }
+    return copy
+  })
   items.value.push(...copies)
   void select(copies.map(item => item.id))
   message.value = `已添加模板：${template.name}`
 }
+async function changeTemplateDevice(sourceId: number, event: Event) {
+  const targetId = Number((event.target as HTMLSelectElement).value)
+  templateDeviceMap.value = { ...templateDeviceMap.value, [sourceId]: targetId }
+  mappingBusy.value = true; templateError.value = ''
+  try { await loadDevicePoints(targetId) }
+  catch (error) { templateError.value = error instanceof Error ? error.message : '目标设备点位读取失败' }
+  finally { mappingBusy.value = false }
+}
+function confirmTemplateMapping() {
+  if (!mappingTemplate.value || !mappingReady.value || mappingBusy.value) return
+  const template = mappingTemplate.value
+  instantiateTemplate(template, templateDeviceMap.value)
+  mappingTemplate.value = null; templateDeviceMap.value = {}
+}
+function cancelTemplateMapping() { mappingTemplate.value = null; templateDeviceMap.value = {} }
 function editTemplate(template: HmiTemplate) { templateEditingId.value = template.id; templateEditName.value = template.name; templateDeleteConfirmId.value = null; templateError.value = '' }
 async function renameTemplate() {
   const template = templates.value.find(item => item.id === templateEditingId.value)
@@ -704,6 +774,21 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         </template>
       </aside>
     </div>
+    <div v-if="mappingTemplate" class="template-mapping-backdrop" @click.self="cancelTemplateMapping">
+      <section class="template-mapping-dialog" role="dialog" aria-modal="true" aria-labelledby="template-mapping-title">
+        <header><div><strong id="template-mapping-title">模板点位映射</strong><small>{{ mappingTemplate.name }}</small></div><button type="button" aria-label="关闭点位映射" @click="cancelTemplateMapping">关闭</button></header>
+        <p>为模板中的源设备选择目标设备。系统按点位编码优先、名称其次自动匹配。</p>
+        <div class="template-mapping-list">
+          <label v-for="row in mappingRows" :key="row.sourceId">
+            <span><strong>{{ row.sourceName }}</strong><small>源设备 #{{ row.sourceId }}</small></span>
+            <select :value="row.targetId" :disabled="mappingBusy" @change="changeTemplateDevice(row.sourceId, $event)"><option v-for="device in readDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select>
+            <em :class="{ complete: row.matched === row.total }">{{ row.matched }} / {{ row.total }} 点位</em>
+          </label>
+        </div>
+        <p v-if="!mappingReady" class="read-error">存在未匹配点位，请选择点位结构相同的目标设备后再加入画布。</p>
+        <footer><button type="button" @click="cancelTemplateMapping">取消</button><button type="button" class="publish" :disabled="mappingBusy || !mappingReady" @click="confirmTemplateMapping">{{ mappingBusy ? '匹配中' : '确认并加入画布' }}</button></footer>
+      </section>
+    </div>
     <footer role="status"><span>{{ message }}</span><span>1200 × 720 · {{ preview ? '预览 / 控制未启用' : '编辑 / 8 px 网格' }}</span></footer>
   </section>
 </template>
@@ -724,5 +809,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-item.pump,.editor-item.gate,.editor-item.motor,.editor-item.plc,.editor-item.gauge { flex-direction:column; padding:6px; }.editor-item .industrial-image { min-height:0; flex:1; }.editor-item .symbol-label { font-size:12px; line-height:14px; }.editor-item .symbol-label + small { font-size:10px; color:var(--muted); line-height:12px; }
 .library-industrial-image { width:28px; height:28px; object-fit:contain; flex:0 0 28px; }
 .template-search { margin:0 0 8px; }.editor-template-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:5px; margin-bottom:8px; }.editor-template-card button { margin:0; }.editor-template-card .template-add { display:grid; grid-template-columns:38px minmax(0,1fr); gap:8px; padding:6px; }.template-preview { display:grid; grid-template-columns:1fr 1fr; place-items:center; width:36px; height:36px; overflow:hidden; background:#101c28; border:1px solid #30465b; }.template-preview img { width:18px; height:18px; object-fit:contain; }.template-preview i { display:grid; place-items:center; width:16px; height:16px; color:#9bb2c7; background:#213449; font-size:9px; font-style:normal; }.template-copy { min-width:0; display:grid; gap:2px; }.template-copy strong,.template-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.template-copy strong { font-size:12px; }.template-copy small { font-size:10px; font-weight:400; }.editor-template-card .template-manage { width:auto; padding-inline:6px; }.editor-template-edit { display:grid; gap:6px; margin:8px 0 14px; }.editor-template-edit input { width:100%; box-sizing:border-box; }.editor-template-edit div { display:grid; grid-template-columns:1fr 1fr; gap:5px; }.editor-template-edit button { margin:0; justify-content:center; }
+.template-mapping-backdrop { position:fixed; inset:0; z-index:1000; display:grid; place-items:center; padding:24px; background:rgba(4,10,16,.76); }.template-mapping-dialog { width:min(620px,calc(100vw - 48px)); max-height:calc(100vh - 48px); overflow:auto; background:#142231; border:1px solid #40566b; box-shadow:0 18px 48px rgba(0,0,0,.38); }.template-mapping-dialog header,.template-mapping-dialog footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; }.template-mapping-dialog header { border-bottom:1px solid var(--line); }.template-mapping-dialog header div { display:grid; gap:3px; }.template-mapping-dialog > p { margin:14px 16px; }.template-mapping-list { display:grid; gap:8px; padding:0 16px 8px; }.template-mapping-list label { display:grid; grid-template-columns:minmax(130px,1fr) minmax(180px,1.2fr) 84px; gap:12px; align-items:center; padding:10px; margin:0; background:#101c28; border:1px solid #30465b; }.template-mapping-list label span { display:grid; gap:2px; min-width:0; }.template-mapping-list label strong,.template-mapping-list label small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.template-mapping-list em { color:#e9b479; font-size:11px; font-style:normal; text-align:right; }.template-mapping-list em.complete { color:#70c69f; }.template-mapping-dialog footer { justify-content:flex-end; border-top:1px solid var(--line); }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>
