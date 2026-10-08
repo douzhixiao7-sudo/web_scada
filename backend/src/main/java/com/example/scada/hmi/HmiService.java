@@ -110,7 +110,7 @@ public class HmiService {
         return jdbcTemplate.query("""
                 select c.*, r.version_no published_version from scada_hmi_config c
                 left join scada_hmi_revision r on r.id = c.published_revision_id
-                order by c.id
+                order by c.sort_order, c.id
                 """, (rs, rowNum) -> mapScreen(rs));
     }
 
@@ -119,8 +119,8 @@ public class HmiService {
         ScreenFields fields = validateScreen(request);
         try {
             jdbcTemplate.update("""
-                    insert into scada_hmi_config(screen_code, screen_name, enabled, draft_json, updated_by)
-                    values (?, ?, ?, '{"version":1,"items":[]}', ?)
+                    insert into scada_hmi_config(screen_code, screen_name, enabled, sort_order, draft_json, updated_by)
+                    values (?, ?, ?, (select coalesce(max_order, 0) + 10 from (select max(sort_order) max_order from scada_hmi_config) current_order), '{"version":1,"items":[]}', ?)
                     """, fields.code(), fields.name(), fields.enabled() ? 1 : 0, actor());
         } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("画面编码已存在"); }
         Long id = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
@@ -132,12 +132,70 @@ public class HmiService {
     public HmiScreenResponse updateScreen(Long id, HmiScreenRequest request) {
         requireScreen(id);
         ScreenFields fields = validateScreen(request);
+        Boolean currentDefault = jdbcTemplate.queryForObject("select is_default from scada_hmi_config where id = ?", Boolean.class, id);
+        if (Boolean.TRUE.equals(currentDefault) && !fields.enabled()) throw new IllegalArgumentException("默认运行画面不能停用，请先设置其他默认画面");
         try {
             jdbcTemplate.update("update scada_hmi_config set screen_code = ?, screen_name = ?, enabled = ?, updated_by = ? where id = ?",
                     fields.code(), fields.name(), fields.enabled() ? 1 : 0, actor(), id);
         } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("画面编码已存在"); }
         audit("HMI_SCREEN_UPDATE", "更新组态画面 " + fields.code());
         return getScreen(id);
+    }
+
+    @Transactional
+    public HmiScreenResponse copyScreen(Long sourceId, HmiScreenRequest request) {
+        requireScreen(sourceId);
+        ScreenFields fields = validateScreen(request);
+        String document = jdbcTemplate.queryForObject("select draft_json from scada_hmi_config where id = ?", String.class, sourceId);
+        try {
+            jdbcTemplate.update("""
+                    insert into scada_hmi_config(screen_code, screen_name, enabled, sort_order, draft_json, updated_by)
+                    values (?, ?, ?, (select coalesce(max_order, 0) + 10 from (select max(sort_order) max_order from scada_hmi_config) current_order), ?, ?)
+                    """, fields.code(), fields.name(), fields.enabled() ? 1 : 0, document, actor());
+        } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("画面编码已存在"); }
+        Long id = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
+        audit("HMI_SCREEN_COPY", "复制组态画面到 " + fields.code());
+        return getScreen(id);
+    }
+
+    @Transactional
+    public HmiScreenResponse setDefault(Long id) {
+        requireScreen(id);
+        Boolean enabled = jdbcTemplate.queryForObject("select enabled from scada_hmi_config where id = ?", Boolean.class, id);
+        if (!Boolean.TRUE.equals(enabled)) throw new IllegalArgumentException("停用画面不能设为默认运行画面");
+        jdbcTemplate.update("update scada_hmi_config set is_default = 0 where is_default = 1");
+        jdbcTemplate.update("update scada_hmi_config set is_default = 1, updated_by = ? where id = ?", actor(), id);
+        audit("HMI_SCREEN_DEFAULT", "设置默认组态画面 " + id);
+        return getScreen(id);
+    }
+
+    @Transactional
+    public void moveScreen(Long id, String direction) {
+        requireScreen(id);
+        String normalized = direction == null ? "" : direction.trim().toUpperCase();
+        if (!Set.of("UP", "DOWN").contains(normalized)) throw new IllegalArgumentException("画面排序方向无效");
+        Integer current = jdbcTemplate.queryForObject("select sort_order from scada_hmi_config where id = ? for update", Integer.class, id);
+        String operator = "UP".equals(normalized) ? "<" : ">";
+        String order = "UP".equals(normalized) ? "desc" : "asc";
+        List<long[]> neighbor = jdbcTemplate.query("select id, sort_order from scada_hmi_config where sort_order " + operator + " ? order by sort_order " + order + ", id " + order + " limit 1 for update",
+                (rs, rowNum) -> new long[] { rs.getLong("id"), rs.getInt("sort_order") }, current);
+        if (neighbor.isEmpty()) return;
+        long[] target = neighbor.getFirst();
+        jdbcTemplate.update("update scada_hmi_config set sort_order = ? where id = ?", target[1], id);
+        jdbcTemplate.update("update scada_hmi_config set sort_order = ? where id = ?", current, target[0]);
+        audit("HMI_SCREEN_MOVE", "调整组态画面顺序 " + id + " " + normalized);
+    }
+
+    @Transactional
+    public void deleteScreen(Long id) {
+        requireScreen(id);
+        HmiScreenResponse screen = getScreen(id);
+        if (screen.defaultScreen()) throw new IllegalArgumentException("默认运行画面不能删除，请先设置其他默认画面");
+        Integer count = jdbcTemplate.queryForObject("select count(*) from scada_hmi_config", Integer.class);
+        if (count == null || count <= 1) throw new IllegalArgumentException("系统至少保留一个组态画面");
+        jdbcTemplate.update("delete from scada_hmi_revision where config_id = ?", id);
+        jdbcTemplate.update("delete from scada_hmi_config where id = ?", id);
+        audit("HMI_SCREEN_DELETE", "删除组态画面 " + screen.code());
     }
 
     private HmiScreenResponse getScreen(Long id) {
@@ -148,7 +206,7 @@ public class HmiService {
     }
 
     private HmiScreenResponse mapScreen(ResultSet rs) throws SQLException {
-        return new HmiScreenResponse(rs.getLong("id"), rs.getString("screen_code"), rs.getString("screen_name"), rs.getBoolean("enabled"),
+        return new HmiScreenResponse(rs.getLong("id"), rs.getString("screen_code"), rs.getString("screen_name"), rs.getBoolean("enabled"), rs.getInt("sort_order"), rs.getBoolean("is_default"),
                 rs.getLong("draft_version"), nullableLong(rs, "published_revision_id"), nullableInt(rs, "published_version"),
                 rs.getString("updated_by"), rs.getTimestamp("updated_at").toInstant());
     }

@@ -287,6 +287,8 @@ public class DatabaseInitializer implements ApplicationRunner {
                     screen_code varchar(64) not null,
                     screen_name varchar(128) not null,
                     enabled tinyint not null default 1,
+                    sort_order int not null default 0,
+                    is_default tinyint not null default 0,
                     draft_json mediumtext not null,
                     draft_version bigint not null default 0,
                     published_revision_id bigint null,
@@ -329,12 +331,19 @@ public class DatabaseInitializer implements ApplicationRunner {
         addColumnIfMissing("scada_hmi_config", "screen_code", "varchar(64) not null default 'MAIN'");
         addColumnIfMissing("scada_hmi_config", "screen_name", "varchar(128) not null default '主运行画面'");
         addColumnIfMissing("scada_hmi_config", "enabled", "tinyint not null default 1");
+        addColumnIfMissing("scada_hmi_config", "sort_order", "int not null default 0");
+        addColumnIfMissing("scada_hmi_config", "is_default", "tinyint not null default 0");
         ensureAutoIncrement("scada_hmi_config", "id");
         addIndexIfMissing("scada_hmi_config", "uk_scada_hmi_config_code", "unique index uk_scada_hmi_config_code(screen_code)");
         jdbcTemplate.update("""
                 insert ignore into scada_hmi_config(id, screen_code, screen_name, draft_json)
                 values (1, 'MAIN', '主运行画面', '{"version":1,"items":[]}')
                 """);
+        jdbcTemplate.update("update scada_hmi_config set sort_order = id * 10 where sort_order = 0");
+        Integer defaultCount = jdbcTemplate.queryForObject("select count(*) from scada_hmi_config where is_default = 1", Integer.class);
+        if (defaultCount == null || defaultCount == 0) {
+            jdbcTemplate.update("update scada_hmi_config set is_default = 1 where id = (select first_id from (select min(id) first_id from scada_hmi_config) seed)");
+        }
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition) {

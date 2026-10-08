@@ -29,6 +29,8 @@ const hmiScreenEnabled = ref(true)
 const hmiScreenCreating = ref(false)
 const hmiScreenSaving = ref(false)
 const hmiScreenError = ref('')
+const hmiScreenCopySourceId = ref<number | null>(null)
+const hmiScreenDeleteConfirmId = ref<number | null>(null)
 const demoModalOpen = ref(false)
 const demoChannelName = ref('金斗河默认通道')
 const demoChannelMode = ref('SIMULATOR')
@@ -96,7 +98,7 @@ type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceN
 type CollectDiagnostic = { channelId: number; channelName: string; success: boolean; message: string; latencyMs: number; pointId: number | null; pointCode: string; pointName: string; rawValue: string; quality: string }
 type HistoryValue = { id: number; deviceId: number; pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 type HistoryLatest = { pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
-type HmiScreen = { id: number; code: string; name: string; enabled: boolean; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
+type HmiScreen = { id: number; code: string; name: string; enabled: boolean; sortOrder: number; defaultScreen: boolean; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
 
 echarts.use([GridComponent, TooltipComponent, BarChart, LineChart, CanvasRenderer])
 
@@ -400,7 +402,8 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, { ...options, headers })
   if (!response.ok) throw new Error(await parseError(response))
   if (response.status === 204) return undefined as T
-  return (await response.json()) as T
+  const text = await response.text()
+  return text ? JSON.parse(text) as T : undefined as T
 }
 
 function menuIconPath(key: string) {
@@ -423,6 +426,7 @@ async function loadHmiScreens(preferredId?: number) {
   try {
     hmiScreens.value = await apiFetch<HmiScreen[]>('/api/hmi/screens')
     const selected = hmiScreens.value.find(screen => screen.id === (preferredId ?? selectedHmiScreenId.value))
+      ?? hmiScreens.value.find(screen => screen.defaultScreen && screen.enabled)
       ?? hmiScreens.value.find(screen => screen.enabled) ?? hmiScreens.value[0] ?? null
     selectedHmiScreenId.value = selected?.id ?? null
     if (!hmiScreenCreating.value) fillHmiScreenForm(selected)
@@ -431,14 +435,28 @@ async function loadHmiScreens(preferredId?: number) {
 
 function selectHmiScreen() {
   hmiScreenCreating.value = false
+  hmiScreenCopySourceId.value = null
+  hmiScreenDeleteConfirmId.value = null
   fillHmiScreenForm(selectedHmiScreen.value)
 }
 
 function beginCreateHmiScreen() {
   hmiScreenCreating.value = true
+  hmiScreenCopySourceId.value = null
   hmiScreenName.value = ''
   hmiScreenCode.value = ''
   hmiScreenEnabled.value = true
+  hmiScreenError.value = ''
+}
+
+function beginCopyHmiScreen() {
+  const screen = selectedHmiScreen.value
+  if (!screen) return
+  hmiScreenCreating.value = true
+  hmiScreenCopySourceId.value = screen.id
+  hmiScreenName.value = `${screen.name} 副本`
+  hmiScreenCode.value = `${screen.code}_COPY`.slice(0, 64)
+  hmiScreenEnabled.value = screen.enabled
   hmiScreenError.value = ''
 }
 
@@ -448,13 +466,40 @@ async function saveHmiScreen() {
   hmiScreenError.value = ''
   try {
     const payload = JSON.stringify({ code: hmiScreenCode.value.trim().toUpperCase(), name: hmiScreenName.value.trim(), enabled: hmiScreenEnabled.value })
-    const screen = await apiFetch<HmiScreen>(hmiScreenCreating.value ? '/api/hmi/screens' : `/api/hmi/screens/${selectedHmiScreenId.value}`, {
+    const createUrl = hmiScreenCopySourceId.value ? `/api/hmi/screens/${hmiScreenCopySourceId.value}/copy` : '/api/hmi/screens'
+    const screen = await apiFetch<HmiScreen>(hmiScreenCreating.value ? createUrl : `/api/hmi/screens/${selectedHmiScreenId.value}`, {
       method: hmiScreenCreating.value ? 'POST' : 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload,
     })
     hmiScreenCreating.value = false
+    hmiScreenCopySourceId.value = null
     await loadHmiScreens(screen.id)
   } catch (error) { hmiScreenError.value = error instanceof Error ? error.message : '画面保存失败' }
   finally { hmiScreenSaving.value = false }
+}
+
+async function moveHmiScreen(direction: 'UP' | 'DOWN') {
+  if (!selectedHmiScreenId.value) return
+  try { await apiFetch<void>(`/api/hmi/screens/${selectedHmiScreenId.value}/move?direction=${direction}`, { method: 'POST' }); await loadHmiScreens(selectedHmiScreenId.value) }
+  catch (error) { hmiScreenError.value = error instanceof Error ? error.message : '排序失败' }
+}
+
+async function setDefaultHmiScreen() {
+  if (!selectedHmiScreenId.value) return
+  try { await apiFetch<HmiScreen>(`/api/hmi/screens/${selectedHmiScreenId.value}/default`, { method: 'POST' }); await loadHmiScreens(selectedHmiScreenId.value) }
+  catch (error) { hmiScreenError.value = error instanceof Error ? error.message : '默认画面设置失败' }
+}
+
+async function deleteHmiScreen() {
+  const id = selectedHmiScreenId.value
+  if (!id) return
+  if (hmiScreenDeleteConfirmId.value !== id) { hmiScreenDeleteConfirmId.value = id; return }
+  try {
+    await apiFetch<void>(`/api/hmi/screens/${id}`, { method: 'DELETE' })
+    localStorage.removeItem(`scada.hmi.editor.draft.v1.${id}`)
+    hmiScreenDeleteConfirmId.value = null
+    selectedHmiScreenId.value = null
+    await loadHmiScreens()
+  } catch (error) { hmiScreenError.value = error instanceof Error ? error.message : '删除失败' }
 }
 
 async function openAlarmFromOverview(alarm: AlarmEvent) {
@@ -1345,11 +1390,12 @@ onUnmounted(() => {
       <section v-else-if="activeMenu === 'hmi'" class="hmi-page">
         <div class="hmi-mode-bar"><button class="ghost compact" :class="{ active: !hmiEditorOpen }" @click="hmiEditorOpen = false">现场展示</button><button class="ghost compact" :class="{ active: hmiEditorOpen }" @click="hmiEditorOpen = true">画布编辑</button></div>
         <section class="hmi-screen-bar panel">
-          <label><span>画面</span><select v-model.number="selectedHmiScreenId" :disabled="hmiScreenCreating" @change="selectHmiScreen"><option v-for="screen in hmiScreens" :key="screen.id" :value="screen.id">{{ screen.name }} · {{ screen.code }}{{ screen.enabled ? '' : ' · 已停用' }}</option></select></label>
+          <label><span>画面</span><select v-model.number="selectedHmiScreenId" :disabled="hmiScreenCreating" @change="selectHmiScreen"><option v-for="screen in hmiScreens" :key="screen.id" :value="screen.id">{{ screen.defaultScreen ? '默认 · ' : '' }}{{ screen.name }} · {{ screen.code }}{{ screen.enabled ? '' : ' · 已停用' }}</option></select></label>
           <label><span>名称</span><input v-model="hmiScreenName" maxlength="128" /></label>
           <label><span>编码</span><input v-model="hmiScreenCode" maxlength="64" @input="hmiScreenCode = hmiScreenCode.toUpperCase()" /></label>
           <label><span>状态</span><select v-model="hmiScreenEnabled"><option :value="true">启用</option><option :value="false">停用</option></select></label>
-          <div class="hmi-screen-actions"><button class="ghost compact" type="button" @click="beginCreateHmiScreen">新增画面</button><button v-if="hmiScreenCreating" class="ghost compact" type="button" @click="hmiScreenCreating = false; fillHmiScreenForm(selectedHmiScreen)">取消</button><button class="primary compact" type="button" :disabled="hmiScreenSaving" @click="saveHmiScreen">{{ hmiScreenSaving ? '保存中' : hmiScreenCreating ? '创建' : '保存信息' }}</button></div>
+          <div class="hmi-screen-actions"><button class="ghost compact" type="button" @click="beginCreateHmiScreen">新增</button><button v-if="hmiScreenCreating" class="ghost compact" type="button" @click="hmiScreenCreating = false; hmiScreenCopySourceId = null; fillHmiScreenForm(selectedHmiScreen)">取消</button><button class="primary compact" type="button" :disabled="hmiScreenSaving" @click="saveHmiScreen">{{ hmiScreenSaving ? '保存中' : hmiScreenCreating ? hmiScreenCopySourceId ? '创建副本' : '创建' : '保存信息' }}</button></div>
+          <div v-if="!hmiScreenCreating && selectedHmiScreen" class="hmi-screen-commands"><button class="ghost compact" type="button" @click="moveHmiScreen('UP')">上移</button><button class="ghost compact" type="button" @click="moveHmiScreen('DOWN')">下移</button><button class="ghost compact" type="button" @click="beginCopyHmiScreen">复制</button><button class="ghost compact" type="button" :disabled="selectedHmiScreen.defaultScreen || !selectedHmiScreen.enabled" @click="setDefaultHmiScreen">{{ selectedHmiScreen.defaultScreen ? '当前默认' : '设为默认' }}</button><button class="ghost compact danger" type="button" :disabled="selectedHmiScreen.defaultScreen" @click="deleteHmiScreen">{{ hmiScreenDeleteConfirmId === selectedHmiScreen.id ? `确认删除 ${selectedHmiScreen.code}` : '删除' }}</button></div>
           <p v-if="hmiScreenError" class="error-text" role="alert">{{ hmiScreenError }}</p>
         </section>
         <HmiEditor v-if="selectedHmiScreenId" v-show="hmiEditorOpen" :active="hmiEditorOpen" :screen-id="selectedHmiScreenId" :read="apiFetch" />
