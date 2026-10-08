@@ -19,8 +19,8 @@ let generation = 0
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
 
-type Kind = 'value' | 'lamp' | 'button' | 'text'
-type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding }
+type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe'
+type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean }
 type Document = { version: 1; items: Item[] }
 type ServerConfig = { document: Document; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
 type ServerRevision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
@@ -29,6 +29,10 @@ const library: { kind: Kind; label: string; path: string }[] = [
   { kind: 'lamp', label: '状态指示灯', path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M9 12h6' },
   { kind: 'button', label: '操作按钮', path: 'M3 6h18v12H3z M9 12h6 M12 9v6' },
   { kind: 'text', label: '文字标签', path: 'M4 5h16 M12 5v14 M8 19h8' },
+  { kind: 'rectangle', label: '矩形容器', path: 'M4 5h16v14H4z' },
+  { kind: 'ellipse', label: '圆形图元', path: 'M4 12a8 6 0 1 0 16 0 8 6 0 1 0-16 0' },
+  { kind: 'line', label: '工艺连线', path: 'M3 12h18 M17 8l4 4-4 4' },
+  { kind: 'pipe', label: '工艺管道', path: 'M3 9h18 M3 15h18' },
 ]
 const storageKey = computed(() => `scada.hmi.editor.draft.v1.${props.screenId}`)
 const items = ref<Item[]>([])
@@ -92,7 +96,7 @@ async function refreshReadings(forceCatalog = false) {
   }
 }
 function bindingDevice(event: Event) {
-  if (!selected.value) return
+  if (!selected.value || selected.value.locked) return
   checkpoint()
   const deviceId = Number((event.target as HTMLSelectElement).value)
   if (!deviceId) delete selected.value.binding
@@ -101,7 +105,7 @@ function bindingDevice(event: Event) {
 }
 function bindingField(field: keyof Omit<ReadBinding, 'deviceId'>, event: Event) {
   const binding = selected.value?.binding
-  if (!binding) return
+  if (!binding || selected.value?.locked) return
   const text = (event.target as HTMLInputElement).value
   const next = { ...binding }
   if (field === 'pointId') {
@@ -134,9 +138,11 @@ function checkpoint() {
   future.value = []
 }
 async function select(ids: string | string[] = []) {
-  selectedIds.value = typeof ids === 'string' ? (ids ? [ids] : []) : ids
+  const requested = typeof ids === 'string' ? (ids ? [ids] : []) : ids
+  const groups = new Set(items.value.filter(item => requested.includes(item.id) && item.groupId).map(item => item.groupId))
+  selectedIds.value = [...new Set([...requested, ...items.value.filter(item => item.groupId && groups.has(item.groupId)).map(item => item.id)])]
   await nextTick()
-  targets.value = Array.from(stage.value?.querySelectorAll<HTMLElement>('[data-item-id]') ?? []).filter(element => selectedIds.value.includes(element.dataset.itemId!))
+  targets.value = Array.from(stage.value?.querySelectorAll<HTMLElement>('[data-item-id]') ?? []).filter(element => selectedIds.value.includes(element.dataset.itemId!) && !items.value.find(item => item.id === element.dataset.itemId)?.locked)
   selector.value?.setSelectedTargets(targets.value)
   moveable.value?.updateRect()
 }
@@ -164,7 +170,7 @@ function syncPosition(item: Item, element?: HTMLElement | SVGElement) {
 }
 function beginDrag(event: OnDragStart) {
   if (event.inputEvent?.shiftKey) { event.stopDrag(); return }
-  if (!selected.value) return
+  if (!selected.value || selected.value.locked) return
   checkpoint()
   event.set([selected.value.x, selected.value.y])
 }
@@ -178,7 +184,7 @@ let groupStart: { item: Item; x: number; y: number }[] = []
 function beginGroupDrag(event: OnDragGroupStart) {
   if (event.inputEvent?.shiftKey) { event.stopDrag(); return }
   checkpoint()
-  groupStart = selection.value.map(item => ({ item, x: item.x, y: item.y }))
+  groupStart = selection.value.filter(item => !item.locked).map(item => ({ item, x: item.x, y: item.y }))
   event.events.forEach(child => child.set([0, 0]))
 }
 function moveSelection(dx: number, dy: number, origins = selection.value.map(item => ({ item, x: item.x, y: item.y }))) {
@@ -196,13 +202,14 @@ function dragGroup(event: OnDragGroup) {
   if (translation) moveSelection(translation[0], translation[1], groupStart)
 }
 function align(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') {
-  if (selection.value.length < 2) return
+  const movable = selection.value.filter(item => !item.locked)
+  if (movable.length < 2) return
   checkpoint()
-  const left = Math.min(...selection.value.map(item => item.x))
-  const right = Math.max(...selection.value.map(item => item.x + item.width))
-  const top = Math.min(...selection.value.map(item => item.y))
-  const bottom = Math.max(...selection.value.map(item => item.y + item.height))
-  selection.value.forEach(item => {
+  const left = Math.min(...movable.map(item => item.x))
+  const right = Math.max(...movable.map(item => item.x + item.width))
+  const top = Math.min(...movable.map(item => item.y))
+  const bottom = Math.max(...movable.map(item => item.y + item.height))
+  movable.forEach(item => {
     if (mode === 'left') item.x = left
     if (mode === 'center') item.x = (left + right - item.width) / 2
     if (mode === 'right') item.x = right - item.width
@@ -213,7 +220,7 @@ function align(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') 
   void nextTick(() => moveable.value?.updateRect())
 }
 function layer(mode: 'front' | 'back' | 'up' | 'down') {
-  if (!selection.value.length) return
+  if (!selection.value.length || selection.value.some(item => item.locked)) return
   checkpoint()
   const chosen = (item: Item) => selectedIds.value.includes(item.id)
   if (mode === 'front') items.value = [...items.value.filter(item => !chosen(item)), ...selection.value]
@@ -235,7 +242,8 @@ function add(kind: Kind, x?: number, y?: number) {
   const cascade = (items.value.length % 8) * 16
   const left = x ?? 80 + cascade
   const top = y ?? 80 + cascade
-  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: 160, height: 80 }
+  const compact = kind === 'line' || kind === 'pipe'
+  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : 160, height: compact ? 40 : 80 }
   items.value.push(item)
   void select(item.id)
 }
@@ -246,7 +254,7 @@ function drop(event: DragEvent) {
   add(kind, (event.clientX - rect.left) / zoom.value, (event.clientY - rect.top) / zoom.value)
 }
 function update(field: 'x' | 'y' | 'width' | 'height' | 'label', event: Event) {
-  if (!selected.value) return
+  if (!selected.value || selected.value.locked) return
   const value = (event.target as HTMLInputElement).value
   checkpoint()
   if (field === 'label') selected.value.label = value.slice(0, 80)
@@ -259,22 +267,23 @@ function update(field: 'x' | 'y' | 'width' | 'height' | 'label', event: Event) {
   void nextTick(() => moveable.value?.updateRect())
 }
 function remove() {
-  if (!selection.value.length || preview.value) return
+  if (!selection.value.length || preview.value || selection.value.some(item => item.locked)) return
   checkpoint()
   items.value = items.value.filter(item => !selectedIds.value.includes(item.id))
   void select()
 }
 function duplicate() {
-  if (!selection.value.length || preview.value) return
+  if (!selection.value.length || preview.value || selection.value.some(item => item.locked)) return
   checkpoint()
   const dx = Math.min(16, 1200 - Math.max(...selection.value.map(item => item.x + item.width)))
   const dy = Math.min(16, 720 - Math.max(...selection.value.map(item => item.y + item.height)))
-  const copies = selection.value.map(source => ({ ...source, id: crypto.randomUUID(), x: source.x + dx, y: source.y + dy }))
+  const groupIds = new Map<string, string>()
+  const copies = selection.value.map(source => ({ ...source, id: crypto.randomUUID(), groupId: source.groupId ? groupIds.get(source.groupId) ?? (() => { const id = crypto.randomUUID(); groupIds.set(source.groupId!, id); return id })() : undefined, x: source.x + dx, y: source.y + dy }))
   items.value.push(...copies)
   void select(copies.map(item => item.id))
 }
 function resize(event: { target: HTMLElement | SVGElement; width: number; height: number; drag: { beforeTranslate: number[] } }) {
-  if (!selected.value) return
+  if (!selected.value || selected.value.locked) return
   const item = selected.value
   item.x = Math.max(0, Math.min(1160, event.drag.beforeTranslate[0]))
   item.y = Math.max(0, Math.min(680, event.drag.beforeTranslate[1]))
@@ -283,7 +292,7 @@ function resize(event: { target: HTMLElement | SVGElement; width: number; height
   Object.assign(event.target.style, { width: `${item.width}px`, height: `${item.height}px`, left: `${item.x}px`, top: `${item.y}px` })
 }
 function beginResize(event: { setMin: (size: number[]) => void; dragStart: false | { set: (position: number[]) => void } }) {
-  if (!selected.value) return
+  if (!selected.value || selected.value.locked) return
   checkpoint()
   event.setMin([40, 40])
   if (event.dragStart) event.dragStart.set([selected.value.x, selected.value.y])
@@ -297,13 +306,34 @@ function travel(redo = false) {
   items.value = JSON.parse(snapshot)
   void select()
 }
+function groupSelection() {
+  if (selection.value.length < 2 || selection.value.some(item => item.locked)) return
+  checkpoint()
+  const groupId = crypto.randomUUID()
+  selection.value.forEach(item => { item.groupId = groupId })
+  void select([...selectedIds.value])
+}
+function ungroupSelection() {
+  if (!selection.value.some(item => item.groupId) || selection.value.some(item => item.locked)) return
+  checkpoint()
+  selection.value.forEach(item => { delete item.groupId })
+  void select([...selectedIds.value])
+}
+function toggleLock() {
+  if (!selection.value.length) return
+  checkpoint()
+  const lock = !selection.value.every(item => item.locked)
+  selection.value.forEach(item => { item.locked = lock || undefined })
+  void select([...selectedIds.value])
+}
 function documentValue(): Document { return { version: 1, items: items.value } }
 function validDocument(value: unknown): value is Document {
   if (!value || typeof value !== 'object') return false
   const document = value as Document
   return document.version === 1 && Array.isArray(document.items) && document.items.length <= 1000 && document.items.every((item: Item) =>
     typeof item.id === 'string' && /^[a-zA-Z0-9-]+$/.test(item.id) && library.some(entry => entry.kind === item.kind) && typeof item.label === 'string' && item.label.length <= 80 &&
-    [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 && (item.binding === undefined || validBinding(item.binding))
+    [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 &&
+    (item.groupId === undefined || /^[a-zA-Z0-9-]+$/.test(item.groupId)) && (item.locked === undefined || typeof item.locked === 'boolean') && (item.binding === undefined || validBinding(item.binding))
   ) && new Set(document.items.map((item: Item) => item.id)).size === document.items.length
 }
 function configUrl(path: string) { return `/api/hmi/config/${path}?screenId=${props.screenId}` }
@@ -420,7 +450,7 @@ function keydown(event: KeyboardEvent) {
   if (event.key === 'Delete') { event.preventDefault(); remove() }
   const directions: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
   const direction = directions[event.key]
-  if (direction && selection.value.length && !command && !event.altKey) {
+  if (direction && selection.value.length && !selection.value.some(item => item.locked) && !command && !event.altKey) {
     event.preventDefault()
     if (!event.repeat) checkpoint()
     const step = event.shiftKey ? 10 : 1
@@ -462,11 +492,12 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         <div :style="{ width: `${1200 * zoom}px`, height: `${720 * zoom}px` }">
           <div ref="stage" class="editor-stage" :class="{ 'is-preview': preview }" :style="{ transform: `scale(${zoom})` }" tabindex="0" aria-label="编辑画布">
             <p v-if="!items.length" class="editor-empty">从左侧添加第一个组件</p>
-            <div v-for="item in items" :key="item.id" :data-item-id="item.id" class="editor-item" :class="[item.kind, { selected: selectedIds.includes(item.id) && !preview }]" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }" :tabindex="preview ? -1 : 0" :aria-label="item.label" @keydown.enter.prevent="!preview && pick(item.id, $event.shiftKey)" @keydown.space.prevent="!preview && pick(item.id, $event.shiftKey)">
+            <div v-for="item in items" :key="item.id" :data-item-id="item.id" class="editor-item" :class="[item.kind, { selected: selectedIds.includes(item.id) && !preview, locked: item.locked }]" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }" :tabindex="preview ? -1 : 0" :aria-label="`${item.label}${item.locked ? '（已锁定）' : ''}`" @keydown.enter.prevent="!preview && pick(item.id, $event.shiftKey)" @keydown.space.prevent="!preview && pick(item.id, $event.shiftKey)">
               <template v-if="item.kind === 'value'"><span>{{ item.label }}</span><strong>{{ reading(item).text }}</strong><small :class="{ 'read-error': reading(item).status !== '正常' }" :title="reading(item).time">{{ reading(item).status }}</small></template>
               <template v-else-if="item.kind === 'lamp'"><i :class="{ 'lamp-active': reading(item).active, 'lamp-idle': reading(item).status === '正常' && !reading(item).active }"></i><span>{{ item.label }}</span><small :title="reading(item).time">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small></template>
               <button v-else-if="item.kind === 'button'" disabled>{{ item.label }}</button>
-              <span v-else>{{ item.label }}</span>
+              <span v-else-if="item.kind === 'text'">{{ item.label }}</span>
+              <span v-else class="shape-label">{{ item.label }}</span>
             </div>
             <!-- Viewport-positioned marquee must not inherit the canvas transform. -->
             <Teleport to="body">
@@ -479,39 +510,41 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
       <aside v-if="!preview" class="editor-properties">
         <h3>组件属性</h3>
         <template v-if="selected">
-          <label>名称<input :value="selected.label" maxlength="80" @change="update('label', $event)" /></label>
-          <div class="editor-fields"><label v-for="field in (['x', 'y', 'width', 'height'] as const)" :key="field">{{ { x: 'X 坐标', y: 'Y 坐标', width: '宽度', height: '高度' }[field] }}<input type="number" :value="Math.round(selected[field])" @change="update(field, $event)" /></label></div>
+          <label>名称<input :disabled="selected.locked" :value="selected.label" maxlength="80" @change="update('label', $event)" /></label>
+          <div class="editor-fields"><label v-for="field in (['x', 'y', 'width', 'height'] as const)" :key="field">{{ { x: 'X 坐标', y: 'Y 坐标', width: '宽度', height: '高度' }[field] }}<input type="number" :disabled="selected.locked" :value="Math.round(selected[field])" @change="update(field, $event)" /></label></div>
           <template v-if="selected.kind === 'value' || selected.kind === 'lamp'">
             <h3>读取绑定</h3>
-            <label>设备<select :value="selected.binding?.deviceId ?? ''" @change="bindingDevice"><option value="">未绑定</option><option v-for="device in readDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
+            <label>设备<select :disabled="selected.locked" :value="selected.binding?.deviceId ?? ''" @change="bindingDevice"><option value="">未绑定</option><option v-for="device in readDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
             <template v-if="selected.binding">
-              <label>点位<select :value="selected.binding.pointId ?? ''" @change="bindingField('pointId', $event)"><option value="">选择点位</option><option v-for="point in selectedPoints" :key="point.id" :value="point.id" :disabled="point.accessMode === 'WRITE_ONLY'">{{ point.name }}</option></select></label>
+              <label>点位<select :disabled="selected.locked" :value="selected.binding.pointId ?? ''" @change="bindingField('pointId', $event)"><option value="">选择点位</option><option v-for="point in selectedPoints" :key="point.id" :value="point.id" :disabled="point.accessMode === 'WRITE_ONLY'">{{ point.name }}</option></select></label>
               <template v-if="selected.kind === 'value'">
-                <label>小数位<input type="number" min="0" max="6" :value="selected.binding.decimals" @change="bindingField('decimals', $event)" /></label>
-                <label>显示单位<input maxlength="40" :value="selected.binding.unit" @change="bindingField('unit', $event)" /></label>
+                <label>小数位<input type="number" min="0" max="6" :disabled="selected.locked" :value="selected.binding.decimals" @change="bindingField('decimals', $event)" /></label>
+                <label>显示单位<input maxlength="40" :disabled="selected.locked" :value="selected.binding.unit" @change="bindingField('unit', $event)" /></label>
               </template>
               <template v-else>
-                <label>有效值<input maxlength="40" :value="selected.binding.activeValue" @change="bindingField('activeValue', $event)" /></label>
-                <label>有效状态文字<input maxlength="40" :value="selected.binding.activeText" @change="bindingField('activeText', $event)" /></label>
-                <label>其他值状态文字<input maxlength="40" :value="selected.binding.inactiveText" @change="bindingField('inactiveText', $event)" /></label>
+                <label>有效值<input maxlength="40" :disabled="selected.locked" :value="selected.binding.activeValue" @change="bindingField('activeValue', $event)" /></label>
+                <label>有效状态文字<input maxlength="40" :disabled="selected.locked" :value="selected.binding.activeText" @change="bindingField('activeText', $event)" /></label>
+                <label>其他值状态文字<input maxlength="40" :disabled="selected.locked" :value="selected.binding.inactiveText" @change="bindingField('inactiveText', $event)" /></label>
               </template>
-              <label>数据过期时间（秒）<input type="number" min="5" max="3600" :value="selected.binding.staleSeconds" @change="bindingField('staleSeconds', $event)" /></label>
+              <label>数据过期时间（秒）<input type="number" min="5" max="3600" :disabled="selected.locked" :value="selected.binding.staleSeconds" @change="bindingField('staleSeconds', $event)" /></label>
               <p role="status">{{ reading(selected).status }}<br />采集时间：{{ reading(selected).time || '—' }}</p>
             </template>
           </template>
-          <p v-else>{{ selected.kind === 'button' ? '控制未启用，不下发设备命令。' : '静态文字，不绑定点位。' }}</p>
+          <p v-else>{{ selected.kind === 'button' ? '控制未启用，不下发设备命令。' : ['rectangle', 'ellipse', 'line', 'pipe'].includes(selected.kind) ? '工业基础图元，不绑定点位。' : '静态文字，不绑定点位。' }}</p>
           <p v-if="catalogError" class="read-error" role="alert">{{ catalogError }}</p>
         </template>
         <p v-else-if="selection.length">已选择 {{ selection.length }} 个组件，可批量移动、对齐和调整图层。</p>
         <p v-else>选择画布组件后编辑属性</p>
         <template v-if="selection.length">
-          <div class="editor-actions"><button @click="duplicate">复制</button><button @click="remove">删除</button></div>
+          <div class="editor-actions"><button :disabled="selection.some(item => item.locked)" @click="duplicate">复制</button><button :disabled="selection.some(item => item.locked)" @click="remove">删除</button><button @click="toggleLock">{{ selection.every(item => item.locked) ? '解锁' : '锁定' }}</button></div>
+          <h3>组合</h3>
+          <div class="editor-commands"><button :disabled="selection.length < 2 || selection.some(item => item.locked)" @click="groupSelection">组合</button><button :disabled="!selection.some(item => item.groupId) || selection.some(item => item.locked)" @click="ungroupSelection">取消组合</button></div>
           <h3>对齐</h3>
           <div class="editor-commands">
-            <button v-for="option in ([['left', '左对齐'], ['center', '水平居中'], ['right', '右对齐'], ['top', '顶对齐'], ['middle', '垂直居中'], ['bottom', '底对齐']] as const)" :key="option[0]" :disabled="selection.length < 2" @click="align(option[0])">{{ option[1] }}</button>
+            <button v-for="option in ([['left', '左对齐'], ['center', '水平居中'], ['right', '右对齐'], ['top', '顶对齐'], ['middle', '垂直居中'], ['bottom', '底对齐']] as const)" :key="option[0]" :disabled="selection.filter(item => !item.locked).length < 2" @click="align(option[0])">{{ option[1] }}</button>
           </div>
           <h3>图层顺序</h3>
-          <div class="editor-commands"><button @click="layer('up')">上移一层</button><button @click="layer('down')">下移一层</button><button @click="layer('front')">置顶</button><button @click="layer('back')">置底</button></div>
+          <div class="editor-commands"><button :disabled="selection.some(item => item.locked)" @click="layer('up')">上移一层</button><button :disabled="selection.some(item => item.locked)" @click="layer('down')">下移一层</button><button :disabled="selection.some(item => item.locked)" @click="layer('front')">置顶</button><button :disabled="selection.some(item => item.locked)" @click="layer('back')">置底</button></div>
         </template>
       </aside>
     </div>
@@ -531,5 +564,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-workspace { display:grid; grid-template-columns:156px minmax(0,1fr) 208px; min-height:540px; }.editor-workspace.preview { grid-template-columns:minmax(0,1fr); }.editor-library,.editor-properties { padding:14px 12px; max-height:650px; overflow:auto; }.editor-library { border-right:1px solid var(--line); }.editor-properties { border-left:1px solid var(--line); }.editor h3 { font-size:13px; margin:0 0 14px; }.editor h3:not(:first-child) { margin-top:24px; }.editor-library button { display:flex; gap:8px; align-items:center; width:100%; text-align:left; margin-bottom:8px; overflow:hidden; overflow-wrap:anywhere; }.editor svg { width:18px; height:18px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.5; }.editor p { line-height:1.7; }
 .editor-viewport { overflow:auto; padding:24px; background:#0c141e; min-width:0; max-height:650px; }.editor-stage { position:relative; width:1200px; height:720px; transform-origin:top left; background-color:#152231; background-image:radial-gradient(#33475b 1px,transparent 1px); background-size:8px 8px; }.editor-stage.is-preview { background-image:none; }.editor-empty { position:absolute; top:40%; width:100%; text-align:center; pointer-events:none; }
 .editor-item { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:8px; box-sizing:border-box; border:1px solid transparent; user-select:none; overflow:hidden; overflow-wrap:anywhere; }.editor-item.selected { border-color:var(--accent); }.editor-item.value { flex-wrap:wrap; background:#1c2d3e; }.editor-item.value strong { font-size:24px; }.editor-item.value span { width:100%; font-size:14px; }.editor-item.lamp i { width:14px; height:14px; background:#8392a3; border-radius:50%; flex-shrink:0; }.editor-item button { width:100%; height:100%; pointer-events:none; }.editor-item.text { justify-content:flex-start; }.editor-properties label { display:grid; gap:6px; font-size:12px; margin-bottom:12px; }.editor-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor input { width:100%; box-sizing:border-box; }.editor footer { justify-content:space-between; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+.editor-item.rectangle { background:rgba(42,67,88,.34); border-color:#54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.editor-item.line::before { content:''; width:100%; border-top:2px solid #82a9c8; }.editor-item.line::after { content:''; position:absolute; right:0; border-left:9px solid #82a9c8; border-top:5px solid transparent; border-bottom:5px solid transparent; }.editor-item.pipe::before { content:''; width:100%; height:10px; box-sizing:border-box; border-top:2px solid #6289a8; border-bottom:2px solid #6289a8; background:#253f53; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:#a9bed0; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>

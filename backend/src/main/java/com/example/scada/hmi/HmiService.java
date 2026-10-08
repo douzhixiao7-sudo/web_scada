@@ -23,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 public class HmiService {
     private static final int MAX_DOCUMENT_BYTES = 1_000_000;
     private static final Pattern ITEM_ID = Pattern.compile("[a-zA-Z0-9-]+");
-    private static final Set<String> KINDS = Set.of("value", "lamp", "button", "text");
+    private static final Set<String> KINDS = Set.of("value", "lamp", "button", "text", "rectangle", "ellipse", "line", "pipe");
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -259,6 +259,10 @@ public class HmiService {
         if (!ITEM_ID.matcher(id).matches() || !KINDS.contains(kind) || label.length() > 80 || width < 40 || height < 40 || x < 0 || y < 0 || x + width > 1200 || y + height > 720) {
             throw new IllegalArgumentException("组态组件格式无效");
         }
+        JsonNode groupId = item.get("groupId");
+        if (groupId != null && (!groupId.isTextual() || !ITEM_ID.matcher(groupId.asText()).matches())) throw new IllegalArgumentException("组态组件分组格式无效");
+        JsonNode locked = item.get("locked");
+        if (locked != null && !locked.isBoolean()) throw new IllegalArgumentException("组态组件锁定格式无效");
         JsonNode binding = item.get("binding");
         if (binding != null && (!binding.isObject() || binding.path("deviceId").asLong(0) <= 0 ||
                 (!binding.path("pointId").isNull() && binding.path("pointId").asLong(0) <= 0) ||

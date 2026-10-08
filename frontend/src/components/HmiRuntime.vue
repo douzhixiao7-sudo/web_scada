@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { readState, validBinding, type LiveValue, type ReadBinding } from './hmiReading'
 
 const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
-type Kind = 'value' | 'lamp' | 'button' | 'text'
-type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding }
+type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe'
+type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean }
 type Document = { version: 1; items: Item[] }
 type Revision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
 
@@ -28,9 +28,11 @@ function validDocument(value: unknown): value is Document {
   if (!value || typeof value !== 'object') return false
   const document = value as Document
   return document.version === 1 && Array.isArray(document.items) && document.items.length <= 1000 && document.items.every(item =>
-    typeof item.id === 'string' && ['value', 'lamp', 'button', 'text'].includes(item.kind) && typeof item.label === 'string' &&
+    typeof item.id === 'string' && ['value', 'lamp', 'button', 'text', 'rectangle', 'ellipse', 'line', 'pipe'].includes(item.kind) && typeof item.label === 'string' &&
     [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 &&
-    item.x + item.width <= 1200 && item.y + item.height <= 720 && (item.binding === undefined || validBinding(item.binding)))
+    item.x + item.width <= 1200 && item.y + item.height <= 720 &&
+    (item.groupId === undefined || /^[a-zA-Z0-9-]+$/.test(item.groupId)) && (item.locked === undefined || typeof item.locked === 'boolean') &&
+    (item.binding === undefined || validBinding(item.binding)))
 }
 
 function resize() {
@@ -120,7 +122,8 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
             <template v-if="item.kind === 'value'"><span>{{ item.label }}</span><strong>{{ reading(item).text }}</strong><small :class="{ error: reading(item).status !== '正常' }" :title="reading(item).time">{{ reading(item).status }}</small></template>
             <template v-else-if="item.kind === 'lamp'"><i :class="{ active: reading(item).active, idle: reading(item).status === '正常' && !reading(item).active }"></i><span>{{ item.label }}</span><small :title="reading(item).time">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small></template>
             <button v-else-if="item.kind === 'button'" type="button" disabled :title="'控制未启用'">{{ item.label }}</button>
-            <span v-else>{{ item.label }}</span>
+            <span v-else-if="item.kind === 'text'">{{ item.label }}</span>
+            <span v-else class="shape-label">{{ item.label }}</span>
           </div>
         </div>
       </div>
@@ -140,5 +143,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .runtime-item.value { flex-wrap:wrap; background:#1c2d3e; border:1px solid #354a5e; }.runtime-item.value span { width:100%; font-size:14px; }.runtime-item.value strong { font-size:24px; }.runtime-item small { color:#9fb0c1; font-size:12px; }.runtime-item small.error { color:#e9b479; }
 .runtime-item.lamp i { width:14px; height:14px; flex-shrink:0; border-radius:50%; background:#7d8fa1; }.runtime-item.lamp i.active { background:#55be96; box-shadow:0 0 0 3px rgba(85,190,150,.14); }.runtime-item.lamp i.idle { background:#8095ac; }
 .runtime-item button { width:100%; height:100%; color:#9fb0c1; background:#1a2a3b; border:1px solid #354a5e; border-radius:3px; }.runtime-item.text { justify-content:flex-start; }
+.runtime-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.runtime-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.runtime-item.line,.runtime-item.pipe { padding:0; overflow:visible; }.runtime-item.line::before { content:''; width:100%; border-top:2px solid #82a9c8; }.runtime-item.line::after { content:''; position:absolute; right:0; border-left:9px solid #82a9c8; border-top:5px solid transparent; border-bottom:5px solid transparent; }.runtime-item.pipe::before { content:''; width:100%; height:10px; box-sizing:border-box; border-top:2px solid #6289a8; border-bottom:2px solid #6289a8; background:#253f53; }.runtime-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:#a9bed0; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }
 .runtime-state { min-height:360px; display:grid; place-content:center; gap:8px; text-align:center; color:#93a8bb; }.runtime-state strong { color:#dce7f0; font-size:16px; }
 </style>
