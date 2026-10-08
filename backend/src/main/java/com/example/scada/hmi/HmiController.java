@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -20,20 +21,20 @@ public class HmiController {
     }
 
     @GetMapping("/draft")
-    public HmiConfigResponse draft() { return hmiService.getDraft(); }
+    public HmiConfigResponse draft(@RequestParam(defaultValue = "1") Long screenId) { return hmiService.getDraft(screenId); }
 
     @PutMapping("/draft")
-    public HmiConfigResponse saveDraft(@RequestBody HmiDocumentRequest request) { return hmiService.saveDraft(request); }
+    public HmiConfigResponse saveDraft(@RequestParam(defaultValue = "1") Long screenId, @RequestBody HmiDocumentRequest request) { return hmiService.saveDraft(screenId, request); }
 
     @GetMapping("/published")
-    public HmiRevisionResponse published() { return hmiService.getPublished(); }
+    public HmiRevisionResponse published(@RequestParam(defaultValue = "1") Long screenId) { return hmiService.getPublished(screenId); }
 
     @PostMapping("/publish")
-    public HmiRevisionResponse publish(@RequestBody HmiDocumentRequest request) { return hmiService.publish(request); }
+    public HmiRevisionResponse publish(@RequestParam(defaultValue = "1") Long screenId, @RequestBody HmiDocumentRequest request) { return hmiService.publish(screenId, request); }
 
     @GetMapping("/versions")
-    public List<HmiRevisionResponse> versions() { return hmiService.listVersions(); }
+    public List<HmiRevisionResponse> versions(@RequestParam(defaultValue = "1") Long screenId) { return hmiService.listVersions(screenId); }
 
     @PostMapping("/versions/{id}/restore")
-    public HmiConfigResponse restore(@PathVariable Long id) { return hmiService.restore(id); }
+    public HmiConfigResponse restore(@PathVariable Long id, @RequestParam(defaultValue = "1") Long screenId) { return hmiService.restore(screenId, id); }
 }

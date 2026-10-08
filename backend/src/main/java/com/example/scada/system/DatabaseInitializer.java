@@ -283,7 +283,10 @@ public class DatabaseInitializer implements ApplicationRunner {
                 """);
         jdbcTemplate.execute("""
                 create table if not exists scada_hmi_config (
-                    id bigint primary key,
+                    id bigint primary key auto_increment,
+                    screen_code varchar(64) not null,
+                    screen_name varchar(128) not null,
+                    enabled tinyint not null default 1,
                     draft_json mediumtext not null,
                     draft_version bigint not null default 0,
                     published_revision_id bigint null,
@@ -302,10 +305,6 @@ public class DatabaseInitializer implements ApplicationRunner {
                     unique key uk_scada_hmi_revision_version(config_id, version_no),
                     index idx_scada_hmi_revision_config(config_id)
                 )
-                """);
-        jdbcTemplate.update("""
-                insert ignore into scada_hmi_config(id, draft_json)
-                values (1, '{"version":1,"items":[]}')
                 """);
         addColumnIfMissing("scada_collect_channel", "channel_mode", "varchar(32) not null default 'SIMULATOR'");
         addColumnIfMissing("scada_collect_channel", "slave_id", "int not null default 1");
@@ -327,6 +326,15 @@ public class DatabaseInitializer implements ApplicationRunner {
         addColumnIfMissing("scada_point", "sixnet_address", "varchar(64) not null default ''");
         addColumnIfMissing("scada_point", "iconics_path", "varchar(255) not null default ''");
         addColumnIfMissing("scada_point", "remark", "varchar(255) not null default ''");
+        addColumnIfMissing("scada_hmi_config", "screen_code", "varchar(64) not null default 'MAIN'");
+        addColumnIfMissing("scada_hmi_config", "screen_name", "varchar(128) not null default '主运行画面'");
+        addColumnIfMissing("scada_hmi_config", "enabled", "tinyint not null default 1");
+        ensureAutoIncrement("scada_hmi_config", "id");
+        addIndexIfMissing("scada_hmi_config", "uk_scada_hmi_config_code", "unique index uk_scada_hmi_config_code(screen_code)");
+        jdbcTemplate.update("""
+                insert ignore into scada_hmi_config(id, screen_code, screen_name, draft_json)
+                values (1, 'MAIN', '主运行画面', '{"version":1,"items":[]}')
+                """);
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition) {
@@ -338,6 +346,22 @@ public class DatabaseInitializer implements ApplicationRunner {
         if (count == null || count == 0) {
             jdbcTemplate.execute("alter table " + tableName + " add column " + columnName + " " + definition);
         }
+    }
+
+    private void addIndexIfMissing(String tableName, String indexName, String definition) {
+        Integer count = jdbcTemplate.queryForObject("""
+                select count(*) from information_schema.statistics
+                where table_schema = database() and table_name = ? and index_name = ?
+                """, Integer.class, tableName, indexName);
+        if (count == null || count == 0) jdbcTemplate.execute("alter table " + tableName + " add " + definition);
+    }
+
+    private void ensureAutoIncrement(String tableName, String columnName) {
+        Integer count = jdbcTemplate.queryForObject("""
+                select count(*) from information_schema.columns
+                where table_schema = database() and table_name = ? and column_name = ? and extra like '%auto_increment%'
+                """, Integer.class, tableName, columnName);
+        if (count == null || count == 0) jdbcTemplate.execute("alter table " + tableName + " modify column " + columnName + " bigint not null auto_increment");
     }
 
     private void seedRole() {

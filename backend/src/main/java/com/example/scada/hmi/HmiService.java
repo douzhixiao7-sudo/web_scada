@@ -9,6 +9,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,7 +21,6 @@ import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class HmiService {
-    private static final long CONFIG_ID = 1L;
     private static final int MAX_DOCUMENT_BYTES = 1_000_000;
     private static final Pattern ITEM_ID = Pattern.compile("[a-zA-Z0-9-]+");
     private static final Set<String> KINDS = Set.of("value", "lamp", "button", "text");
@@ -33,72 +33,142 @@ public class HmiService {
         this.objectMapper = objectMapper;
     }
 
-    public HmiConfigResponse getDraft() {
+    public HmiConfigResponse getDraft(Long configId) {
+        requireScreen(configId);
         return jdbcTemplate.queryForObject("""
                 select c.*, r.version_no published_version
                 from scada_hmi_config c
                 left join scada_hmi_revision r on r.id = c.published_revision_id
                 where c.id = ?
-                """, (rs, rowNum) -> mapConfig(rs), CONFIG_ID);
+                """, (rs, rowNum) -> mapConfig(rs), configId);
     }
 
     @Transactional
-    public HmiConfigResponse saveDraft(HmiDocumentRequest request) {
+    public HmiConfigResponse saveDraft(Long configId, HmiDocumentRequest request) {
+        requireScreen(configId);
         if (request == null) throw new IllegalArgumentException("组态文档不能为空");
         String json = validateAndSerialize(request.document());
         Long expected = request.expectedDraftVersion();
         int updated = expected == null
-                ? jdbcTemplate.update("update scada_hmi_config set draft_json = ?, draft_version = draft_version + 1, updated_by = ? where id = ?", json, actor(), CONFIG_ID)
-                : jdbcTemplate.update("update scada_hmi_config set draft_json = ?, draft_version = draft_version + 1, updated_by = ? where id = ? and draft_version = ?", json, actor(), CONFIG_ID, expected);
+                ? jdbcTemplate.update("update scada_hmi_config set draft_json = ?, draft_version = draft_version + 1, updated_by = ? where id = ?", json, actor(), configId)
+                : jdbcTemplate.update("update scada_hmi_config set draft_json = ?, draft_version = draft_version + 1, updated_by = ? where id = ? and draft_version = ?", json, actor(), configId, expected);
         if (updated == 0) throw new IllegalArgumentException("草稿已被其他会话修改，请刷新后再保存");
         audit("HMI_DRAFT_SAVE", "保存组态草稿");
-        return getDraft();
+        return getDraft(configId);
     }
 
     @Transactional
-    public HmiRevisionResponse publish(HmiDocumentRequest request) {
-        jdbcTemplate.queryForObject("select id from scada_hmi_config where id = ? for update", Long.class, CONFIG_ID);
-        HmiConfigResponse saved = saveDraft(request);
-        Integer next = jdbcTemplate.queryForObject("select coalesce(max(version_no), 0) + 1 from scada_hmi_revision where config_id = ?", Integer.class, CONFIG_ID);
+    public HmiRevisionResponse publish(Long configId, HmiDocumentRequest request) {
+        requireScreen(configId);
+        jdbcTemplate.queryForObject("select id from scada_hmi_config where id = ? for update", Long.class, configId);
+        HmiConfigResponse saved = saveDraft(configId, request);
+        Integer next = jdbcTemplate.queryForObject("select coalesce(max(version_no), 0) + 1 from scada_hmi_revision where config_id = ?", Integer.class, configId);
         int version = next == null ? 1 : next;
-        jdbcTemplate.update("insert into scada_hmi_revision(config_id, version_no, content_json, published_by) values (?, ?, ?, ?)", CONFIG_ID, version, serialize(saved.document()), actor());
+        jdbcTemplate.update("insert into scada_hmi_revision(config_id, version_no, content_json, published_by) values (?, ?, ?, ?)", configId, version, serialize(saved.document()), actor());
         Long revisionId = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
-        jdbcTemplate.update("update scada_hmi_config set published_revision_id = ? where id = ?", revisionId, CONFIG_ID);
+        jdbcTemplate.update("update scada_hmi_config set published_revision_id = ? where id = ?", revisionId, configId);
         audit("HMI_PUBLISH", "发布组态版本 V" + version);
-        return getRevision(revisionId);
+        return getRevision(configId, revisionId);
     }
 
-    public HmiRevisionResponse getPublished() {
-        Long id = jdbcTemplate.queryForObject("select published_revision_id from scada_hmi_config where id = ?", Long.class, CONFIG_ID);
+    public HmiRevisionResponse getPublished(Long configId) {
+        requireScreen(configId);
+        Long id = jdbcTemplate.queryForObject("select published_revision_id from scada_hmi_config where id = ?", Long.class, configId);
         if (id == null) throw new IllegalArgumentException("尚未发布组态版本");
-        return getRevision(id);
+        return getRevision(configId, id);
     }
 
-    public List<HmiRevisionResponse> listVersions() {
+    public List<HmiRevisionResponse> listVersions(Long configId) {
+        requireScreen(configId);
         return jdbcTemplate.query("""
                 select r.*, (r.id = c.published_revision_id) current_revision
                 from scada_hmi_revision r join scada_hmi_config c on c.id = r.config_id
                 where r.config_id = ? order by r.version_no desc limit 50
-                """, (rs, rowNum) -> mapRevision(rs), CONFIG_ID);
+                """, (rs, rowNum) -> mapRevision(rs), configId);
     }
 
     @Transactional
-    public HmiConfigResponse restore(Long id) {
-        HmiRevisionResponse revision = getRevision(id);
-        jdbcTemplate.update("update scada_hmi_config set draft_json = ?, draft_version = draft_version + 1, updated_by = ? where id = ?", serialize(revision.document()), actor(), CONFIG_ID);
+    public HmiConfigResponse restore(Long configId, Long id) {
+        requireScreen(configId);
+        HmiRevisionResponse revision = getRevision(configId, id);
+        jdbcTemplate.update("update scada_hmi_config set draft_json = ?, draft_version = draft_version + 1, updated_by = ? where id = ?", serialize(revision.document()), actor(), configId);
         audit("HMI_RESTORE", "恢复组态版本 V" + revision.version() + " 到草稿");
-        return getDraft();
+        return getDraft(configId);
     }
 
-    private HmiRevisionResponse getRevision(Long id) {
+    private HmiRevisionResponse getRevision(Long configId, Long id) {
         List<HmiRevisionResponse> rows = jdbcTemplate.query("""
                 select r.*, (r.id = c.published_revision_id) current_revision
                 from scada_hmi_revision r join scada_hmi_config c on c.id = r.config_id
                 where r.id = ? and r.config_id = ?
-                """, (rs, rowNum) -> mapRevision(rs), id, CONFIG_ID);
+                """, (rs, rowNum) -> mapRevision(rs), id, configId);
         if (rows.isEmpty()) throw new IllegalArgumentException("组态版本不存在");
         return rows.getFirst();
     }
+
+    public List<HmiScreenResponse> listScreens() {
+        return jdbcTemplate.query("""
+                select c.*, r.version_no published_version from scada_hmi_config c
+                left join scada_hmi_revision r on r.id = c.published_revision_id
+                order by c.id
+                """, (rs, rowNum) -> mapScreen(rs));
+    }
+
+    @Transactional
+    public HmiScreenResponse createScreen(HmiScreenRequest request) {
+        ScreenFields fields = validateScreen(request);
+        try {
+            jdbcTemplate.update("""
+                    insert into scada_hmi_config(screen_code, screen_name, enabled, draft_json, updated_by)
+                    values (?, ?, ?, '{"version":1,"items":[]}', ?)
+                    """, fields.code(), fields.name(), fields.enabled() ? 1 : 0, actor());
+        } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("画面编码已存在"); }
+        Long id = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
+        audit("HMI_SCREEN_CREATE", "创建组态画面 " + fields.code());
+        return getScreen(id);
+    }
+
+    @Transactional
+    public HmiScreenResponse updateScreen(Long id, HmiScreenRequest request) {
+        requireScreen(id);
+        ScreenFields fields = validateScreen(request);
+        try {
+            jdbcTemplate.update("update scada_hmi_config set screen_code = ?, screen_name = ?, enabled = ?, updated_by = ? where id = ?",
+                    fields.code(), fields.name(), fields.enabled() ? 1 : 0, actor(), id);
+        } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("画面编码已存在"); }
+        audit("HMI_SCREEN_UPDATE", "更新组态画面 " + fields.code());
+        return getScreen(id);
+    }
+
+    private HmiScreenResponse getScreen(Long id) {
+        return jdbcTemplate.queryForObject("""
+                select c.*, r.version_no published_version from scada_hmi_config c
+                left join scada_hmi_revision r on r.id = c.published_revision_id where c.id = ?
+                """, (rs, rowNum) -> mapScreen(rs), id);
+    }
+
+    private HmiScreenResponse mapScreen(ResultSet rs) throws SQLException {
+        return new HmiScreenResponse(rs.getLong("id"), rs.getString("screen_code"), rs.getString("screen_name"), rs.getBoolean("enabled"),
+                rs.getLong("draft_version"), nullableLong(rs, "published_revision_id"), nullableInt(rs, "published_version"),
+                rs.getString("updated_by"), rs.getTimestamp("updated_at").toInstant());
+    }
+
+    private ScreenFields validateScreen(HmiScreenRequest request) {
+        if (request == null) throw new IllegalArgumentException("画面信息不能为空");
+        String code = request.code() == null ? "" : request.code().trim().toUpperCase();
+        String name = request.name() == null ? "" : request.name().trim();
+        if (!code.matches("[A-Z0-9_-]{2,64}")) throw new IllegalArgumentException("画面编码仅支持 2–64 位大写字母、数字、下划线和短横线");
+        if (name.isEmpty() || name.length() > 128) throw new IllegalArgumentException("画面名称长度应为 1–128 个字符");
+        return new ScreenFields(code, name, !Boolean.FALSE.equals(request.enabled()));
+    }
+
+    private void requireScreen(Long id) {
+        if (id == null || id <= 0) throw new IllegalArgumentException("组态画面不存在");
+        Integer count = jdbcTemplate.queryForObject("select count(*) from scada_hmi_config where id = ?", Integer.class, id);
+        if (count == null || count == 0) throw new IllegalArgumentException("组态画面不存在");
+    }
+
+    private record ScreenFields(String code, String name, boolean enabled) { }
 
     private HmiConfigResponse mapConfig(ResultSet rs) throws SQLException {
         Timestamp updatedAt = rs.getTimestamp("updated_at");

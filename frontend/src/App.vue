@@ -21,6 +21,14 @@ const themeMode = ref<ThemeMode>(savedTheme === 'light' ? 'light' : 'dark')
 const naiveTheme = computed(() => themeMode.value === 'dark' ? darkTheme : null)
 const themeLabel = computed(() => themeMode.value === 'dark' ? '明亮模式' : '深色模式')
 const hmiEditorOpen = ref(false)
+const hmiScreens = ref<HmiScreen[]>([])
+const selectedHmiScreenId = ref<number | null>(null)
+const hmiScreenName = ref('')
+const hmiScreenCode = ref('')
+const hmiScreenEnabled = ref(true)
+const hmiScreenCreating = ref(false)
+const hmiScreenSaving = ref(false)
+const hmiScreenError = ref('')
 const demoModalOpen = ref(false)
 const demoChannelName = ref('金斗河默认通道')
 const demoChannelMode = ref('SIMULATOR')
@@ -88,6 +96,7 @@ type ControlCommand = { id: number; commandNo: string; deviceId: number; deviceN
 type CollectDiagnostic = { channelId: number; channelName: string; success: boolean; message: string; latencyMs: number; pointId: number | null; pointCode: string; pointName: string; rawValue: string; quality: string }
 type HistoryValue = { id: number; deviceId: number; pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
 type HistoryLatest = { pointId: number; pointCode: string; pointName: string; value: string; quality: string; collectedAt: string }
+type HmiScreen = { id: number; code: string; name: string; enabled: boolean; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
 
 echarts.use([GridComponent, TooltipComponent, BarChart, LineChart, CanvasRenderer])
 
@@ -201,6 +210,7 @@ const menuIconPaths: Record<string, string> = {
 }
 
 const activeItem = computed(() => menuItems.value.find((item) => item.key === activeMenu.value) ?? menuItems.value[0] ?? fallbackMenus[0])
+const selectedHmiScreen = computed(() => hmiScreens.value.find(screen => screen.id === selectedHmiScreenId.value) ?? null)
 const dbStatus = computed(() => health.value?.components?.db?.status ?? 'UNKNOWN')
 const redisStatus = computed(() => health.value?.components?.redis?.status ?? 'UNKNOWN')
 const overallStatus = computed(() => health.value?.status ?? 'UNKNOWN')
@@ -399,6 +409,52 @@ function menuIconPath(key: string) {
 
 function handleMenuClick(key: string) {
   activeMenu.value = key
+  if (key === 'hmi') void loadHmiScreens()
+}
+
+function fillHmiScreenForm(screen: HmiScreen | null) {
+  hmiScreenName.value = screen?.name ?? ''
+  hmiScreenCode.value = screen?.code ?? ''
+  hmiScreenEnabled.value = screen?.enabled ?? true
+  hmiScreenError.value = ''
+}
+
+async function loadHmiScreens(preferredId?: number) {
+  try {
+    hmiScreens.value = await apiFetch<HmiScreen[]>('/api/hmi/screens')
+    const selected = hmiScreens.value.find(screen => screen.id === (preferredId ?? selectedHmiScreenId.value))
+      ?? hmiScreens.value.find(screen => screen.enabled) ?? hmiScreens.value[0] ?? null
+    selectedHmiScreenId.value = selected?.id ?? null
+    if (!hmiScreenCreating.value) fillHmiScreenForm(selected)
+  } catch (error) { hmiScreenError.value = error instanceof Error ? error.message : '画面列表读取失败' }
+}
+
+function selectHmiScreen() {
+  hmiScreenCreating.value = false
+  fillHmiScreenForm(selectedHmiScreen.value)
+}
+
+function beginCreateHmiScreen() {
+  hmiScreenCreating.value = true
+  hmiScreenName.value = ''
+  hmiScreenCode.value = ''
+  hmiScreenEnabled.value = true
+  hmiScreenError.value = ''
+}
+
+async function saveHmiScreen() {
+  if (hmiScreenSaving.value) return
+  hmiScreenSaving.value = true
+  hmiScreenError.value = ''
+  try {
+    const payload = JSON.stringify({ code: hmiScreenCode.value.trim().toUpperCase(), name: hmiScreenName.value.trim(), enabled: hmiScreenEnabled.value })
+    const screen = await apiFetch<HmiScreen>(hmiScreenCreating.value ? '/api/hmi/screens' : `/api/hmi/screens/${selectedHmiScreenId.value}`, {
+      method: hmiScreenCreating.value ? 'POST' : 'PUT', headers: { 'Content-Type': 'application/json' }, body: payload,
+    })
+    hmiScreenCreating.value = false
+    await loadHmiScreens(screen.id)
+  } catch (error) { hmiScreenError.value = error instanceof Error ? error.message : '画面保存失败' }
+  finally { hmiScreenSaving.value = false }
 }
 
 async function openAlarmFromOverview(alarm: AlarmEvent) {
@@ -1287,9 +1343,18 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="activeMenu === 'hmi'" class="hmi-page">
-        <div style="grid-column: 1 / -1; display:flex; gap:8px"><button class="ghost compact" @click="hmiEditorOpen = false">现场展示</button><button class="ghost compact" @click="hmiEditorOpen = true">画布编辑</button></div>
-        <HmiEditor v-show="hmiEditorOpen" :active="hmiEditorOpen" :read="apiFetch" />
-        <HmiRuntime v-show="!hmiEditorOpen" :active="!hmiEditorOpen" :read="apiFetch" />
+        <div class="hmi-mode-bar"><button class="ghost compact" :class="{ active: !hmiEditorOpen }" @click="hmiEditorOpen = false">现场展示</button><button class="ghost compact" :class="{ active: hmiEditorOpen }" @click="hmiEditorOpen = true">画布编辑</button></div>
+        <section class="hmi-screen-bar panel">
+          <label><span>画面</span><select v-model.number="selectedHmiScreenId" :disabled="hmiScreenCreating" @change="selectHmiScreen"><option v-for="screen in hmiScreens" :key="screen.id" :value="screen.id">{{ screen.name }} · {{ screen.code }}{{ screen.enabled ? '' : ' · 已停用' }}</option></select></label>
+          <label><span>名称</span><input v-model="hmiScreenName" maxlength="128" /></label>
+          <label><span>编码</span><input v-model="hmiScreenCode" maxlength="64" @input="hmiScreenCode = hmiScreenCode.toUpperCase()" /></label>
+          <label><span>状态</span><select v-model="hmiScreenEnabled"><option :value="true">启用</option><option :value="false">停用</option></select></label>
+          <div class="hmi-screen-actions"><button class="ghost compact" type="button" @click="beginCreateHmiScreen">新增画面</button><button v-if="hmiScreenCreating" class="ghost compact" type="button" @click="hmiScreenCreating = false; fillHmiScreenForm(selectedHmiScreen)">取消</button><button class="primary compact" type="button" :disabled="hmiScreenSaving" @click="saveHmiScreen">{{ hmiScreenSaving ? '保存中' : hmiScreenCreating ? '创建' : '保存信息' }}</button></div>
+          <p v-if="hmiScreenError" class="error-text" role="alert">{{ hmiScreenError }}</p>
+        </section>
+        <HmiEditor v-if="selectedHmiScreenId" v-show="hmiEditorOpen" :active="hmiEditorOpen" :screen-id="selectedHmiScreenId" :read="apiFetch" />
+        <HmiRuntime v-if="selectedHmiScreenId && selectedHmiScreen?.enabled" v-show="!hmiEditorOpen" :active="!hmiEditorOpen" :screen-id="selectedHmiScreenId" :read="apiFetch" />
+        <section v-else-if="selectedHmiScreenId && !hmiEditorOpen" class="panel hmi-disabled-state"><strong>画面已停用</strong><span>启用后才会进入现场运行展示，仍可切换到画布编辑维护草稿。</span></section>
       </section>
 
       <section v-else-if="activeMenu === 'alarms'" class="alarm-page"><section class="panel page-panel"><div class="panel-head"><h3>报警事件</h3><span>{{ alarmLoading ? '刷新中' : `${alarmStatusText(alarmStatusFilter)} ${alarmRows.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>状态</span><select v-model="alarmStatusFilter" @change="loadAlarms"><option value="ACTIVE">活动中</option><option value="ACKED">已确认</option><option value="RECOVERED">已恢复</option><option value="ALL">全部</option></select></label><button class="ghost compact" type="button" @click="loadAlarms">刷新报警</button></div><div class="alarm-list"><article v-for="alarm in alarmRows" :key="alarm.id" :class="{ highlighted: alarm.id === highlightedAlarmId }"><span :class="['alarm-level', alarm.level === '高' ? 'danger' : alarm.level === '中' ? 'warn' : 'info']">{{ alarm.level }}</span><div><strong>{{ alarm.message }} · {{ alarmStatusText(alarm.status) }}</strong><small>{{ alarm.deviceName }} · {{ alarm.pointName }} · 值 {{ alarm.value }} · 发生 {{ new Date(alarm.occurredAt).toLocaleTimeString() }}<template v-if="alarm.acknowledgedAt"> · {{ alarm.acknowledgedBy }} 已确认</template><template v-if="alarm.recoveredAt"> · 恢复 {{ new Date(alarm.recoveredAt).toLocaleTimeString() }}</template></small><small v-if="alarm.ackNote">备注：{{ alarm.ackNote }}</small></div><button class="ghost compact" type="button" :disabled="alarm.status === 'RECOVERED'" @click="acknowledgeAlarm(alarm)">{{ alarm.status === 'ACKED' ? '补充备注' : alarm.status === 'RECOVERED' ? '已恢复' : '确认' }}</button></article><p v-if="!alarmRows.length && !alarmLoading" class="muted">当前状态下没有报警事件。</p></div></section><section class="panel page-panel"><div class="panel-head"><h3>报警规则维护</h3><span>{{ alarmRuleLoading ? '加载中' : `规则 ${alarmRules.length} 条` }}</span></div><div class="toolbar alarm-toolbar"><label><span>设备</span><select v-model.number="alarmRuleDeviceId" @change="loadAlarmRules"><option :value="null">全部设备</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label><button class="ghost compact" type="button" @click="loadAlarmRules">刷新规则</button></div><form class="alarm-rule-form" @submit.prevent="createAlarmRule"><label><span>点位</span><select v-model.number="alarmRuleForm.pointId"><option v-for="point in alarmRulePoints" :key="point.id" :value="point.id">{{ point.name }}</option></select></label><label><span>规则名称</span><input v-model="alarmRuleForm.ruleName" /></label><label><span>类型</span><select v-model="alarmRuleForm.ruleType"><option v-for="item in alarmRuleTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></label><label><span>操作符</span><select v-model="alarmRuleForm.operator"><option value=">">大于</option><option value="<">小于</option><option value="=">等于</option></select></label><label><span>阈值</span><input v-model.number="alarmRuleForm.thresholdValue" type="number" step="0.0001" /></label><label><span>等级</span><select v-model="alarmRuleForm.level"><option v-for="level in alarmLevelOptions" :key="level" :value="level">{{ level }}</option></select></label><label class="span-2"><span>报警内容</span><input v-model="alarmRuleForm.message" /></label><label><span>启用</span><select v-model="alarmRuleForm.enabled"><option :value="true">启用</option><option :value="false">停用</option></select></label><button class="primary compact" type="submit">新增规则</button></form><div class="table-wrap"><table><thead><tr><th>点位</th><th>规则</th><th>类型</th><th>阈值</th><th>等级</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="rule in alarmRules" :key="rule.id"><td>{{ rule.pointName }}<small>{{ rule.pointCode }}</small></td><td>{{ rule.ruleName }}<small>{{ rule.message }}</small></td><td>{{ ruleTypeText(rule.ruleType) }}</td><td>{{ rule.thresholdValue ?? '-' }}</td><td>{{ rule.level }}</td><td><span :class="['tag', rule.enabled ? 'ok' : 'idle']">{{ rule.enabled ? '启用' : '停用' }}</span></td><td class="row-actions"><button class="ghost compact" type="button" @click="editAlarmRule(rule)">编辑</button><button class="ghost compact" type="button" @click="deleteAlarmRule(rule)">删除</button></td></tr></tbody></table></div></section></section>

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { readState, validBinding, type LiveValue, type ReadBinding } from './hmiReading'
 
-const props = defineProps<{ active: boolean; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
+const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
 type Kind = 'value' | 'lamp' | 'button' | 'text'
 type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding }
 type Document = { version: 1; items: Item[] }
@@ -46,7 +46,7 @@ async function loadPublished() {
   loading.value = true
   error.value = ''
   try {
-    const response = await props.read<Revision>('/api/hmi/config/published', { signal: AbortSignal.timeout(8000) })
+    const response = await props.read<Revision>(`/api/hmi/config/published?screenId=${props.screenId}`, { signal: AbortSignal.timeout(8000) })
     if (run !== generation || !validDocument(response.document)) throw new Error('发布版本格式无效')
     revision.value = response
     await refreshValues(run)
@@ -85,9 +85,10 @@ function reading(item: Item) {
   return readState(binding, value, problem, now.value, item.kind === 'lamp')
 }
 
-watch(() => props.active, active => {
+watch(() => [props.active, props.screenId] as const, ([active]) => {
   generation++
   clearTimeout(refreshTimer)
+  revision.value = null; valuesByDevice.value = {}; errorsByDevice.value = {}; error.value = ''
   if (active) void loadPublished()
 }, { immediate: true })
 watch(viewport, element => {

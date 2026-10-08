@@ -5,7 +5,7 @@ import Selecto from 'vue3-selecto'
 import type { OnDrag, OnDragStart, OnDragGroup, OnDragGroupStart } from 'vue3-moveable'
 import { readState, validBinding, type ReadBinding, type LiveValue } from './hmiReading'
 
-const props = defineProps<{ active: boolean; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
+const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
 type ReadDevice = { id: number; name: string }
 type ReadPoint = { id: number; deviceId: number; name: string; unit: string; accessMode: string }
 const readDevices = ref<ReadDevice[]>([])
@@ -30,7 +30,7 @@ const library: { kind: Kind; label: string; path: string }[] = [
   { kind: 'button', label: '操作按钮', path: 'M3 6h18v12H3z M9 12h6 M12 9v6' },
   { kind: 'text', label: '文字标签', path: 'M4 5h16 M12 5v14 M8 19h8' },
 ]
-const storageKey = 'scada.hmi.editor.draft.v1'
+const storageKey = computed(() => `scada.hmi.editor.draft.v1.${props.screenId}`)
 const items = ref<Item[]>([])
 const selectedIds = ref<string[]>([])
 const selection = computed(() => items.value.filter(item => selectedIds.value.includes(item.id)))
@@ -127,6 +127,7 @@ watch(() => props.active, active => {
   if (active) void refreshReadings()
 }, { immediate: true })
 watch(() => boundDevices.value.join(','), () => { if (props.active) void refreshReadings() })
+watch(() => props.screenId, (screenId, previous) => { void switchScreen(screenId, previous) }, { immediate: true })
 function checkpoint() {
   past.value.push(JSON.stringify(items.value))
   if (past.value.length > 50) past.value.shift()
@@ -305,9 +306,10 @@ function validDocument(value: unknown): value is Document {
     [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 && (item.binding === undefined || validBinding(item.binding))
   ) && new Set(document.items.map((item: Item) => item.id)).size === document.items.length
 }
-function saveLocal(text = '已保存到当前浏览器') {
+function configUrl(path: string) { return `/api/hmi/config/${path}?screenId=${props.screenId}` }
+function saveLocal(text = '已保存到当前浏览器', key = storageKey.value) {
   try {
-    localStorage.setItem(storageKey, JSON.stringify(documentValue()))
+    localStorage.setItem(key, JSON.stringify(documentValue()))
     saved.value = JSON.stringify(items.value)
     message.value = text + ' · ' + new Date().toLocaleTimeString()
   } catch { message.value = '保存失败：浏览器存储不可用，请保留当前页面。' }
@@ -318,7 +320,7 @@ async function save() {
   saveLocal('正在保存服务端草稿')
   saving.value = true
   try {
-    const response = await props.read<ServerConfig>('/api/hmi/config/draft', {
+    const response = await props.read<ServerConfig>(configUrl('draft'), {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ document: documentValue(), expectedDraftVersion: serverDraftVersion.value }),
     })
@@ -332,18 +334,18 @@ async function save() {
   finally { saving.value = false }
 }
 async function loadVersions() {
-  versions.value = await props.read<ServerRevision[]>('/api/hmi/config/versions')
+  versions.value = await props.read<ServerRevision[]>(configUrl('versions'))
   if (!versions.value.some(version => version.id === selectedVersionId.value)) selectedVersionId.value = versions.value[0]?.id ?? null
 }
 async function publish() {
   if (saving.value) return
   saving.value = true
   try {
-    const revision = await props.read<ServerRevision>('/api/hmi/config/publish', {
+    const revision = await props.read<ServerRevision>(configUrl('publish'), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ document: documentValue(), expectedDraftVersion: serverDraftVersion.value }),
     })
-    const config = await props.read<ServerConfig>('/api/hmi/config/draft')
+    const config = await props.read<ServerConfig>(configUrl('draft'))
     serverDraftVersion.value = config.draftVersion
     publishedVersion.value = revision.version
     saveLocal(`已发布 V${revision.version}`)
@@ -355,7 +357,7 @@ async function restoreVersion() {
   if (!selectedVersionId.value || saving.value) return
   saving.value = true
   try {
-    const config = await props.read<ServerConfig>(`/api/hmi/config/versions/${selectedVersionId.value}/restore`, { method: 'POST' })
+    const config = await props.read<ServerConfig>(configUrl(`versions/${selectedVersionId.value}/restore`), { method: 'POST' })
     if (!validDocument(config.document)) throw new Error('服务端版本格式无效')
     items.value = config.document.items
     serverDraftVersion.value = config.draftVersion
@@ -368,7 +370,7 @@ async function restoreVersion() {
 }
 function loadLocal() {
   try {
-    const raw = localStorage.getItem(storageKey)
+    const raw = localStorage.getItem(storageKey.value)
     if (!raw) return false
     const document = JSON.parse(raw) as Document
     if (!validDocument(document)) throw new Error('Invalid draft')
@@ -379,8 +381,10 @@ function loadLocal() {
   } catch { message.value = '本地草稿无法读取，原存储未覆盖。'; return false }
 }
 async function loadServer(hadLocal: boolean) {
+  const screenId = props.screenId
   try {
-    const config = await props.read<ServerConfig>('/api/hmi/config/draft')
+    const config = await props.read<ServerConfig>(configUrl('draft'))
+    if (screenId !== props.screenId) return
     if (!validDocument(config.document)) throw new Error('服务端草稿格式无效')
     serverDraftVersion.value = config.draftVersion
     publishedVersion.value = config.publishedVersion
@@ -394,6 +398,16 @@ async function loadServer(hadLocal: boolean) {
     }
     await loadVersions()
   } catch (error) { message.value = `服务端草稿读取失败，继续使用本地草稿：${error instanceof Error ? error.message : '未知错误'}` }
+}
+async function switchScreen(screenId: number, previous?: number) {
+  if (previous && dirty.value) saveLocal('已自动保存浏览器草稿', `scada.hmi.editor.draft.v1.${previous}`)
+  generation++; clearTimeout(refreshTimer); refreshing.value = false
+  pointsByDevice.value = {}; liveByDevice.value = {}; readErrors.value = {}; catalogError.value = ''
+  items.value = []; selectedIds.value = []; targets.value = []; past.value = []; future.value = []; versions.value = []
+  selectedVersionId.value = null; serverDraftVersion.value = null; publishedVersion.value = null
+  const hadLocal = loadLocal()
+  await loadServer(hadLocal)
+  if (props.active && screenId === props.screenId) void refreshReadings(true)
 }
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
 function keydown(event: KeyboardEvent) {
@@ -414,7 +428,7 @@ function keydown(event: KeyboardEvent) {
     void nextTick(() => moveable.value?.updateRect())
   }
 }
-onMounted(() => { const hadLocal = loadLocal(); void loadServer(hadLocal); clockTimer = setInterval(() => { now.value = Date.now() }, 1000); window.addEventListener('beforeunload', beforeUnload) })
+onMounted(() => { clockTimer = setInterval(() => { now.value = Date.now() }, 1000); window.addEventListener('beforeunload', beforeUnload) })
 onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(clockTimer); if (dirty.value) saveLocal(); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 

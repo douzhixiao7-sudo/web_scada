@@ -556,10 +556,15 @@ tr.selected { background: rgba(65,199,185,.07); }
 
 .hmi-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
+.hmi-mode-bar { display:flex; gap:8px; }.hmi-mode-bar .active { border-color:var(--accent); color:var(--text); background:var(--surface-raised); }
+.hmi-screen-bar { display:grid; grid-template-columns:minmax(180px,1.5fr) minmax(160px,1fr) minmax(130px,.8fr) 100px auto; gap:12px; align-items:end; padding:14px 16px; }
+.hmi-screen-bar label { display:grid; gap:6px; min-width:0; }.hmi-screen-bar label span { color:var(--muted); font-size:12px; }.hmi-screen-bar input,.hmi-screen-bar select { width:100%; min-width:0; box-sizing:border-box; }.hmi-screen-actions { display:flex; gap:8px; justify-content:flex-end; }.hmi-screen-bar .error-text { grid-column:1/-1; margin:0; color:var(--danger); font-size:12px; }
+.hmi-disabled-state { min-height:280px; display:grid; place-content:center; gap:8px; text-align:center; }.hmi-disabled-state span { color:var(--muted); font-size:13px; }
+@media(max-width:1100px) { .hmi-screen-bar { grid-template-columns:1fr 1fr; }.hmi-screen-actions { justify-content:flex-start; } }
 .hmi-canvas {
   min-height: 640px;
   overflow: hidden;
