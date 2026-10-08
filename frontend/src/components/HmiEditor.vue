@@ -26,6 +26,7 @@ type Item = { id: string; kind: Kind; label: string; x: number; y: number; width
 type Document = { version: 1; items: Item[] }
 type ServerConfig = { document: Document; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
 type ServerRevision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
+type HmiTemplate = { id: number; name: string; document: Document; updatedBy: string; updatedAt: string }
 const library: { kind: Kind; label: string; path: string; group: 'basic' | 'industrial' }[] = [
   { kind: 'value', label: '数值显示', path: 'M4 5h16v14H4z M8 9h8 M8 13h4', group: 'basic' },
   { kind: 'lamp', label: '状态指示灯', path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M9 12h6', group: 'basic' },
@@ -62,6 +63,13 @@ const publishedVersion = ref<number | null>(null)
 const versions = ref<ServerRevision[]>([])
 const selectedVersionId = ref<number | null>(null)
 const saving = ref(false)
+const templates = ref<HmiTemplate[]>([])
+const newTemplateName = ref('')
+const templateEditName = ref('')
+const templateEditingId = ref<number | null>(null)
+const templateDeleteConfirmId = ref<number | null>(null)
+const templateBusy = ref(false)
+const templateError = ref('')
 const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))].sort((a, b) => a - b))
 const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
 const defaultStyle: ItemStyle = { fill: '#253f53', stroke: '#82a9c8', strokeWidth: 2, textColor: '#a9bed0' }
@@ -144,7 +152,7 @@ watch(() => props.active, active => {
   generation++
   refreshing.value = false
   clearTimeout(refreshTimer)
-  if (active) void refreshReadings()
+  if (active) { void refreshReadings(); void loadTemplates() }
 }, { immediate: true })
 watch(() => boundDevices.value.join(','), () => { if (props.active) void refreshReadings() })
 watch(() => props.screenId, (screenId, previous) => { void switchScreen(screenId, previous) }, { immediate: true })
@@ -358,6 +366,59 @@ function toggleLock() {
   selection.value.forEach(item => { item.locked = lock || undefined })
   void select([...selectedIds.value])
 }
+async function loadTemplates() {
+  try { templates.value = await props.read<HmiTemplate[]>('/api/hmi/templates'); templateError.value = '' }
+  catch (error) { templateError.value = error instanceof Error ? error.message : '模板读取失败' }
+}
+function templateDocument(): Document {
+  const left = Math.min(...selection.value.map(item => item.x))
+  const top = Math.min(...selection.value.map(item => item.y))
+  const copies = selection.value.map(item => ({ ...JSON.parse(JSON.stringify(item)), x: item.x - left, y: item.y - top, locked: undefined }))
+  return { version: 1, items: copies }
+}
+async function createTemplate() {
+  if (!selection.value.length || templateBusy.value) return
+  templateBusy.value = true; templateError.value = ''
+  try {
+    await props.read<HmiTemplate>('/api/hmi/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newTemplateName.value.trim(), document: templateDocument() }) })
+    newTemplateName.value = ''; await loadTemplates(); message.value = '组件模板已保存到服务端'
+  } catch (error) { templateError.value = error instanceof Error ? error.message : '模板保存失败' }
+  finally { templateBusy.value = false }
+}
+function addTemplate(template: HmiTemplate) {
+  if (preview.value || !validDocument(template.document)) return
+  checkpoint()
+  const groupIds = new Map<string, string>()
+  const cascade = (items.value.length % 8) * 16
+  const width = Math.max(...template.document.items.map(item => item.x + item.width))
+  const height = Math.max(...template.document.items.map(item => item.y + item.height))
+  const left = Math.min(1200 - width, 80 + cascade)
+  const top = Math.min(720 - height, 80 + cascade)
+  const copies = template.document.items.map(source => ({ ...JSON.parse(JSON.stringify(source)), id: crypto.randomUUID(), groupId: source.groupId ? groupIds.get(source.groupId) ?? (() => { const id = crypto.randomUUID(); groupIds.set(source.groupId!, id); return id })() : undefined, locked: undefined, x: source.x + left, y: source.y + top }))
+  items.value.push(...copies)
+  void select(copies.map(item => item.id))
+  message.value = `已添加模板：${template.name}`
+}
+function editTemplate(template: HmiTemplate) { templateEditingId.value = template.id; templateEditName.value = template.name; templateDeleteConfirmId.value = null; templateError.value = '' }
+async function renameTemplate() {
+  const template = templates.value.find(item => item.id === templateEditingId.value)
+  if (!template || templateBusy.value) return
+  templateBusy.value = true; templateError.value = ''
+  try {
+    await props.read<HmiTemplate>(`/api/hmi/templates/${template.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: templateEditName.value.trim(), document: template.document }) })
+    templateEditingId.value = null; templateEditName.value = ''; await loadTemplates()
+  } catch (error) { templateError.value = error instanceof Error ? error.message : '模板重命名失败' }
+  finally { templateBusy.value = false }
+}
+async function deleteTemplate() {
+  const id = templateEditingId.value
+  if (!id || templateBusy.value) return
+  if (templateDeleteConfirmId.value !== id) { templateDeleteConfirmId.value = id; return }
+  templateBusy.value = true; templateError.value = ''
+  try { await props.read<void>(`/api/hmi/templates/${id}`, { method: 'DELETE' }); templateEditingId.value = null; templateEditName.value = ''; templateDeleteConfirmId.value = null; await loadTemplates() }
+  catch (error) { templateError.value = error instanceof Error ? error.message : '模板删除失败' }
+  finally { templateBusy.value = false }
+}
 function documentValue(): Document { return { version: 1, items: items.value } }
 function validDocument(value: unknown): value is Document {
   if (!value || typeof value !== 'object') return false
@@ -522,6 +583,11 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         <button v-for="entry in library.filter(item => item.group === 'industrial')" :key="entry.kind" draggable="true" @dragstart="$event.dataTransfer?.setData('application/x-scada-component', entry.kind)" @click="add(entry.kind)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>{{ entry.label }}
         </button>
+        <h3>自定义模板 <small>{{ templates.length }}</small></h3>
+        <p v-if="!templates.length">尚未保存模板</p>
+        <div v-for="template in templates" :key="template.id" class="editor-template-row"><button :title="`添加 ${template.name}`" @click="addTemplate(template)">{{ template.name }}</button><button title="管理模板" @click="editTemplate(template)">管理</button></div>
+        <div v-if="templateEditingId" class="editor-template-edit"><input v-model="templateEditName" maxlength="128" aria-label="管理模板名称" /><div><button :disabled="templateBusy || !templateEditName.trim()" @click="renameTemplate">重命名</button><button :disabled="templateBusy" @click="deleteTemplate">{{ templateDeleteConfirmId === templateEditingId ? '确认删除' : '删除' }}</button></div><button @click="templateEditingId = null; templateEditName = ''">取消</button></div>
+        <p v-if="templateError" class="read-error" role="alert">{{ templateError }}</p>
         <p>空白处拖动框选，Shift 加选。方向键微调，Shift + 方向键移动 10 px。离开菜单自动保存。</p>
         <h3>图层 <small>{{ items.length }}</small></h3>
         <button v-for="item in [...items].reverse()" :key="item.id" :class="{ chosen: selectedIds.includes(item.id) }" @click="pick(item.id, $event.shiftKey)">{{ item.label }}</button>
@@ -596,6 +662,8 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         <p v-else>选择画布组件后编辑属性</p>
         <template v-if="selection.length">
           <div class="editor-actions"><button :disabled="selection.some(item => item.locked)" @click="duplicate">复制</button><button :disabled="selection.some(item => item.locked)" @click="remove">删除</button><button @click="toggleLock">{{ selection.every(item => item.locked) ? '解锁' : '锁定' }}</button></div>
+          <h3>保存为模板</h3>
+          <label>模板名称<input v-model="newTemplateName" maxlength="128" placeholder="例如：主机运行单元" /></label><button :disabled="templateBusy || !newTemplateName.trim()" @click="createTemplate">{{ templateBusy ? '保存中' : '保存模板' }}</button>
           <h3>组合</h3>
           <div class="editor-commands"><button :disabled="selection.length < 2 || selection.some(item => item.locked)" @click="groupSelection">组合</button><button :disabled="!selection.some(item => item.groupId) || selection.some(item => item.locked)" @click="ungroupSelection">取消组合</button></div>
           <h3>对齐</h3>
@@ -625,5 +693,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-item { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:8px; box-sizing:border-box; border:1px solid transparent; user-select:none; overflow:hidden; overflow-wrap:anywhere; }.editor-item.selected { border-color:var(--accent); }.editor-item.value { flex-wrap:wrap; background:#1c2d3e; }.editor-item.value strong { font-size:24px; }.editor-item.value span { width:100%; font-size:14px; }.editor-item.lamp i { width:14px; height:14px; background:#8392a3; border-radius:50%; flex-shrink:0; }.editor-item button { width:100%; height:100%; pointer-events:none; }.editor-item.text { justify-content:flex-start; }.editor-properties label { display:grid; gap:6px; font-size:12px; margin-bottom:12px; }.editor-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor input { width:100%; box-sizing:border-box; }.editor footer { justify-content:space-between; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
 .editor-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }.editor-color-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor-color-fields input[type='color'] { height:32px; padding:3px; }.editor-check { display:flex!important; grid-template-columns:18px 1fr; align-items:center; }.editor-check input { width:auto; }
 .editor-item.pump,.editor-item.gate,.editor-item.motor,.editor-item.plc,.editor-item.gauge { flex-direction:column; padding:6px; }.editor-item .industrial-symbol { min-height:0; flex:1; }.editor-item .symbol-label { font-size:12px; line-height:14px; }.editor-item .symbol-label + small { font-size:10px; color:var(--muted); line-height:12px; }
+.editor-template-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:5px; }.editor-template-row button:last-child { width:auto; padding-inline:6px; }.editor-template-edit { display:grid; gap:6px; margin:8px 0 14px; }.editor-template-edit input { width:100%; box-sizing:border-box; }.editor-template-edit div { display:grid; grid-template-columns:1fr 1fr; gap:5px; }.editor-template-edit button { margin:0; justify-content:center; }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>

@@ -114,6 +114,38 @@ public class HmiService {
                 """, (rs, rowNum) -> mapScreen(rs));
     }
 
+    public List<HmiTemplateResponse> listTemplates() {
+        return jdbcTemplate.query("select * from scada_hmi_template order by template_name, id", (rs, rowNum) -> mapTemplate(rs));
+    }
+
+    public HmiTemplateResponse createTemplate(HmiTemplateRequest request) {
+        String name = templateName(request.name());
+        String json = validateTemplate(request.document());
+        try {
+            jdbcTemplate.update("insert into scada_hmi_template(template_name, content_json, updated_by) values (?, ?, ?)", name, json, actor());
+        } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("模板名称已存在"); }
+        Long id = jdbcTemplate.queryForObject("select id from scada_hmi_template where template_name = ?", Long.class, name);
+        audit("HMI_TEMPLATE_CREATE", name);
+        return getTemplate(id);
+    }
+
+    public HmiTemplateResponse updateTemplate(Long id, HmiTemplateRequest request) {
+        getTemplate(id);
+        String name = templateName(request.name());
+        String json = validateTemplate(request.document());
+        try {
+            jdbcTemplate.update("update scada_hmi_template set template_name = ?, content_json = ?, updated_by = ? where id = ?", name, json, actor(), id);
+        } catch (DuplicateKeyException ex) { throw new IllegalArgumentException("模板名称已存在"); }
+        audit("HMI_TEMPLATE_UPDATE", name);
+        return getTemplate(id);
+    }
+
+    public void deleteTemplate(Long id) {
+        HmiTemplateResponse template = getTemplate(id);
+        jdbcTemplate.update("delete from scada_hmi_template where id = ?", id);
+        audit("HMI_TEMPLATE_DELETE", template.name());
+    }
+
     @Transactional
     public HmiScreenResponse createScreen(HmiScreenRequest request) {
         ScreenFields fields = validateScreen(request);
@@ -237,6 +269,29 @@ public class HmiService {
     private HmiRevisionResponse mapRevision(ResultSet rs) throws SQLException {
         return new HmiRevisionResponse(rs.getLong("id"), rs.getInt("version_no"), parse(rs.getString("content_json")),
                 rs.getString("published_by"), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("current_revision"));
+    }
+
+    private HmiTemplateResponse getTemplate(Long id) {
+        List<HmiTemplateResponse> rows = jdbcTemplate.query("select * from scada_hmi_template where id = ?", (rs, rowNum) -> mapTemplate(rs), id);
+        if (rows.isEmpty()) throw new IllegalArgumentException("组态模板不存在");
+        return rows.getFirst();
+    }
+
+    private HmiTemplateResponse mapTemplate(ResultSet rs) throws SQLException {
+        return new HmiTemplateResponse(rs.getLong("id"), rs.getString("template_name"), parse(rs.getString("content_json")),
+                rs.getString("updated_by"), rs.getTimestamp("updated_at").toInstant());
+    }
+
+    private String templateName(String value) {
+        String name = value == null ? "" : value.trim();
+        if (name.isEmpty() || name.length() > 128) throw new IllegalArgumentException("模板名称长度应为 1-128 个字符");
+        return name;
+    }
+
+    private String validateTemplate(JsonNode document) {
+        String json = validateAndSerialize(document);
+        if (document.path("items").isEmpty() || document.path("items").size() > 100) throw new IllegalArgumentException("模板应包含 1-100 个组件");
+        return json;
     }
 
     private String validateAndSerialize(JsonNode document) {

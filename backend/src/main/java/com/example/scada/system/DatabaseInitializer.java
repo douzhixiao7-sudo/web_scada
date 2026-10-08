@@ -308,6 +308,16 @@ public class DatabaseInitializer implements ApplicationRunner {
                     index idx_scada_hmi_revision_config(config_id)
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table if not exists scada_hmi_template (
+                    id bigint primary key auto_increment,
+                    template_name varchar(128) not null unique,
+                    content_json mediumtext not null,
+                    updated_by varchar(64) not null default '',
+                    created_at timestamp not null default current_timestamp,
+                    updated_at timestamp not null default current_timestamp on update current_timestamp
+                )
+                """);
         addColumnIfMissing("scada_collect_channel", "channel_mode", "varchar(32) not null default 'SIMULATOR'");
         addColumnIfMissing("scada_collect_channel", "slave_id", "int not null default 1");
         addColumnIfMissing("scada_collect_channel", "timeout_ms", "int not null default 1200");
