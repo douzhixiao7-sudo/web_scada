@@ -4,7 +4,7 @@ import Moveable from 'vue3-moveable'
 import Selecto from 'vue3-selecto'
 import type { OnDrag, OnDragStart, OnDragGroup, OnDragGroupStart } from 'vue3-moveable'
 import { readState, validBinding, type ReadBinding, type LiveValue } from './hmiReading'
-import HmiIndustrialSymbol from './HmiIndustrialSymbol.vue'
+import HmiIndustrialImage from './HmiIndustrialImage.vue'
 
 const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
 type ReadDevice = { id: number; name: string }
@@ -73,6 +73,8 @@ const templateError = ref('')
 const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))].sort((a, b) => a - b))
 const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
 const defaultStyle: ItemStyle = { fill: '#253f53', stroke: '#82a9c8', strokeWidth: 2, textColor: '#a9bed0' }
+const industrialKinds: Kind[] = ['pump', 'gate', 'motor', 'plc', 'gauge']
+function industrialAsset(kind: Kind) { return `/assets/hmi/industrial/${kind}.png` }
 function itemStyle(item: Item) { return { ...defaultStyle, ...item.style } }
 function pathPoints(item: Item) {
   const horizontal = `4,${item.height / 2} ${item.width - 10},${item.height / 2}`
@@ -268,7 +270,7 @@ function add(kind: Kind, x?: number, y?: number) {
   const top = y ?? 80 + cascade
   const compact = kind === 'line' || kind === 'pipe'
   const symbol = ['pump', 'gate', 'motor', 'plc', 'gauge'].includes(kind)
-  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : symbol ? 120 : 160, height: compact ? 40 : symbol ? 104 : 80, style: { ...defaultStyle }, route: compact ? 'horizontal' : undefined }
+  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : symbol ? 144 : 160, height: compact ? 40 : symbol ? 144 : 80, style: { ...defaultStyle }, route: compact ? 'horizontal' : undefined }
   items.value.push(item)
   void select(item.id)
 }
@@ -581,7 +583,7 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         </button>
         <h3>工业符号</h3>
         <button v-for="entry in library.filter(item => item.group === 'industrial')" :key="entry.kind" draggable="true" @dragstart="$event.dataTransfer?.setData('application/x-scada-component', entry.kind)" @click="add(entry.kind)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>{{ entry.label }}
+          <img class="library-industrial-image" :src="industrialAsset(entry.kind)" alt="" draggable="false" />{{ entry.label }}
         </button>
         <h3>自定义模板 <small>{{ templates.length }}</small></h3>
         <p v-if="!templates.length">尚未保存模板</p>
@@ -610,7 +612,7 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
                 <span class="shape-label">{{ item.label }}</span>
               </template>
               <template v-else-if="['pump', 'gate', 'motor', 'plc', 'gauge'].includes(item.kind)">
-                <HmiIndustrialSymbol :kind="item.kind as 'pump' | 'gate' | 'motor' | 'plc' | 'gauge'" :stroke="itemStyle(item).stroke" :fill="itemStyle(item).fill" :stroke-width="itemStyle(item).strokeWidth" :active="reading(item).active" />
+                <HmiIndustrialImage :kind="item.kind as 'pump' | 'gate' | 'motor' | 'plc' | 'gauge'" :active="reading(item).active" />
                 <span class="symbol-label">{{ item.label }}</span><small :class="{ 'read-error': reading(item).status !== '正常' }">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small>
               </template>
               <span v-else class="shape-label">{{ item.label }}</span>
@@ -647,10 +649,11 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
             </template>
           </template>
           <p v-else>{{ selected.kind === 'button' ? '控制未启用，不下发设备命令。' : ['rectangle', 'ellipse', 'line', 'pipe'].includes(selected.kind) ? '工业基础图元，不绑定点位。' : '静态文字，不绑定点位。' }}</p>
-          <template v-if="['rectangle', 'ellipse', 'line', 'pipe', 'text', 'pump', 'gate', 'motor', 'plc', 'gauge'].includes(selected.kind)">
+          <template v-if="['rectangle', 'ellipse', 'line', 'pipe', 'text'].includes(selected.kind)">
             <h3>外观</h3>
             <div class="editor-color-fields"><label>填充<input type="color" :disabled="selected.locked" :value="itemStyle(selected).fill" @input="updateStyle('fill', $event)" /></label><label>边框 / 线<input type="color" :disabled="selected.locked" :value="itemStyle(selected).stroke" @input="updateStyle('stroke', $event)" /></label><label>文字<input type="color" :disabled="selected.locked" :value="itemStyle(selected).textColor" @input="updateStyle('textColor', $event)" /></label><label>线宽<input type="number" min="1" max="12" :disabled="selected.locked" :value="itemStyle(selected).strokeWidth" @input="updateStyle('strokeWidth', $event)" /></label></div>
           </template>
+          <p v-else-if="industrialKinds.includes(selected.kind)">设备图片保持统一材质，运行状态由点位数据和状态文字反馈。</p>
           <template v-if="selected.kind === 'line' || selected.kind === 'pipe'">
             <h3>路径</h3>
             <label>走向<select :disabled="selected.locked" :value="selected.route ?? 'horizontal'" @change="updatePath('route', $event)"><option value="horizontal">水平</option><option value="vertical">垂直</option><option value="elbow">正交折线</option></select></label>
@@ -692,7 +695,8 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-viewport { overflow:auto; padding:24px; background:#0c141e; min-width:0; max-height:650px; }.editor-stage { position:relative; width:1200px; height:720px; transform-origin:top left; background-color:#152231; background-image:radial-gradient(#33475b 1px,transparent 1px); background-size:8px 8px; }.editor-stage.is-preview { background-image:none; }.editor-empty { position:absolute; top:40%; width:100%; text-align:center; pointer-events:none; }
 .editor-item { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:8px; box-sizing:border-box; border:1px solid transparent; user-select:none; overflow:hidden; overflow-wrap:anywhere; }.editor-item.selected { border-color:var(--accent); }.editor-item.value { flex-wrap:wrap; background:#1c2d3e; }.editor-item.value strong { font-size:24px; }.editor-item.value span { width:100%; font-size:14px; }.editor-item.lamp i { width:14px; height:14px; background:#8392a3; border-radius:50%; flex-shrink:0; }.editor-item button { width:100%; height:100%; pointer-events:none; }.editor-item.text { justify-content:flex-start; }.editor-properties label { display:grid; gap:6px; font-size:12px; margin-bottom:12px; }.editor-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor input { width:100%; box-sizing:border-box; }.editor footer { justify-content:space-between; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
 .editor-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }.editor-color-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor-color-fields input[type='color'] { height:32px; padding:3px; }.editor-check { display:flex!important; grid-template-columns:18px 1fr; align-items:center; }.editor-check input { width:auto; }
-.editor-item.pump,.editor-item.gate,.editor-item.motor,.editor-item.plc,.editor-item.gauge { flex-direction:column; padding:6px; }.editor-item .industrial-symbol { min-height:0; flex:1; }.editor-item .symbol-label { font-size:12px; line-height:14px; }.editor-item .symbol-label + small { font-size:10px; color:var(--muted); line-height:12px; }
+.editor-item.pump,.editor-item.gate,.editor-item.motor,.editor-item.plc,.editor-item.gauge { flex-direction:column; padding:6px; }.editor-item .industrial-image { min-height:0; flex:1; }.editor-item .symbol-label { font-size:12px; line-height:14px; }.editor-item .symbol-label + small { font-size:10px; color:var(--muted); line-height:12px; }
+.library-industrial-image { width:28px; height:28px; object-fit:contain; flex:0 0 28px; }
 .editor-template-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:5px; }.editor-template-row button:last-child { width:auto; padding-inline:6px; }.editor-template-edit { display:grid; gap:6px; margin:8px 0 14px; }.editor-template-edit input { width:100%; box-sizing:border-box; }.editor-template-edit div { display:grid; grid-template-columns:1fr 1fr; gap:5px; }.editor-template-edit button { margin:0; justify-content:center; }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>
