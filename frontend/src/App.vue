@@ -1366,7 +1366,7 @@ onUnmounted(() => {
 
       <section v-else-if="activeMenu === 'hmi'" class="hmi-page">
         <div style="grid-column: 1 / -1; display:flex; gap:8px"><button class="ghost compact" @click="hmiEditorOpen = false">现场展示</button><button class="ghost compact" @click="hmiEditorOpen = true">画布编辑</button></div>
-        <HmiEditor v-show="hmiEditorOpen" />
+        <HmiEditor v-show="hmiEditorOpen" :active="hmiEditorOpen" :read="apiFetch" />
         <section v-show="!hmiEditorOpen" class="hmi-canvas panel">
           <div class="panel-head"><div><h3>金斗河固定版 HMI</h3><span>展示型组态 · Redis 当前值 · {{ hmiLastUpdated || '等待刷新' }}</span></div><button class="ghost compact" type="button" @click="refreshHmiValues">刷新画面</button></div>
           <div class="hmi-process" aria-label="金斗河现场设备组态展示">

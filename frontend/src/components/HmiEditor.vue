@@ -1,11 +1,26 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Moveable from 'vue3-moveable'
 import Selecto from 'vue3-selecto'
 import type { OnDrag, OnDragStart, OnDragGroup, OnDragGroupStart } from 'vue3-moveable'
+import { readState, validBinding, type ReadBinding, type LiveValue } from './hmiReading'
+
+const props = defineProps<{ active: boolean; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
+type ReadDevice = { id: number; name: string }
+type ReadPoint = { id: number; deviceId: number; name: string; unit: string; accessMode: string }
+const readDevices = ref<ReadDevice[]>([])
+const pointsByDevice = ref<Record<number, ReadPoint[]>>({})
+const liveByDevice = ref<Record<number, LiveValue[]>>({})
+const readErrors = ref<Record<number, string>>({})
+const catalogError = ref('')
+const refreshing = ref(false)
+const now = ref(Date.now())
+let generation = 0
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let clockTimer: ReturnType<typeof setInterval> | undefined
 
 type Kind = 'value' | 'lamp' | 'button' | 'text'
-type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number }
+type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding }
 type Document = { version: 1; items: Item[] }
 const library: { kind: Kind; label: string; path: string }[] = [
   { kind: 'value', label: '数值显示', path: 'M4 5h16v14H4z M8 9h8 M8 13h4' },
@@ -24,11 +39,87 @@ const selector = ref<InstanceType<typeof Selecto> | null>(null)
 const moveable = ref<InstanceType<typeof Moveable> | null>(null)
 const zoom = ref(0.75)
 const preview = ref(false)
-const message = ref('本地草稿 · 尚未接入点位读写')
+const message = ref('本地草稿 · 只读绑定 / 控制未启用')
 const saved = ref(JSON.stringify(items.value))
 const dirty = computed(() => saved.value !== JSON.stringify(items.value))
 const past = ref<string[]>([])
 const future = ref<string[]>([])
+const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item.binding ? [item.binding.deviceId] : []))].sort((a, b) => a - b))
+const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
+
+async function refreshReadings(forceCatalog = false) {
+  if (!props.active || refreshing.value) return
+  clearTimeout(refreshTimer)
+  refreshing.value = true
+  const run = generation
+  try {
+    const devices = forceCatalog || !readDevices.value.length
+      ? await props.read<ReadDevice[]>('/api/devices', { signal: AbortSignal.timeout(8000) })
+      : readDevices.value
+    if (run !== generation) return
+    readDevices.value = devices
+    catalogError.value = ''
+    await Promise.all(boundDevices.value.map(async deviceId => {
+      try {
+        if (!devices.some(device => device.id === deviceId)) { readErrors.value[deviceId] = '设备不存在'; return }
+        const points = forceCatalog || !pointsByDevice.value[deviceId]
+          ? await props.read<ReadPoint[]>(`/api/points?deviceId=${deviceId}`, { signal: AbortSignal.timeout(8000) })
+          : pointsByDevice.value[deviceId]
+        const values = await props.read<LiveValue[]>(`/api/realtime/values?deviceId=${deviceId}`, { signal: AbortSignal.timeout(8000) })
+        if (run !== generation) return
+        pointsByDevice.value[deviceId] = points
+        liveByDevice.value[deviceId] = values
+        readErrors.value[deviceId] = ''
+      } catch {
+        if (run === generation) readErrors.value[deviceId] = '读取失败'
+      }
+    }))
+  } catch {
+    if (run === generation) catalogError.value = '连接异常，请检查登录或后端服务'
+  } finally {
+    if (run === generation) {
+      refreshing.value = false
+      now.value = Date.now()
+      if (props.active) refreshTimer = setTimeout(refreshReadings, 5000)
+    }
+  }
+}
+function bindingDevice(event: Event) {
+  if (!selected.value) return
+  checkpoint()
+  const deviceId = Number((event.target as HTMLSelectElement).value)
+  if (!deviceId) delete selected.value.binding
+  else selected.value.binding = { deviceId, pointId: null, decimals: 2, unit: '', staleSeconds: 30, activeValue: '1', activeText: '运行', inactiveText: '停止' }
+  void refreshReadings()
+}
+function bindingField(field: keyof Omit<ReadBinding, 'deviceId'>, event: Event) {
+  const binding = selected.value?.binding
+  if (!binding) return
+  const text = (event.target as HTMLInputElement).value
+  const next = { ...binding }
+  if (field === 'pointId') {
+    next.pointId = text ? Number(text) : null
+    next.unit = selectedPoints.value.find(point => point.id === next.pointId)?.unit?.slice(0, 40) ?? ''
+  } else if (field === 'decimals' || field === 'staleSeconds') next[field] = Number(text)
+  else next[field] = text.slice(0, 40)
+  if (!validBinding(next)) { message.value = '格式无效：小数位 0–6，过期时间 5–3600 秒'; return }
+  checkpoint()
+  selected.value!.binding = next
+}
+function reading(item: Item) {
+  const binding = item.binding
+  const point = binding && pointsByDevice.value[binding.deviceId]?.find(point => point.id === binding.pointId)
+  const problem = !binding ? '' : catalogError.value || readErrors.value[binding.deviceId] ||
+    (!pointsByDevice.value[binding.deviceId] ? '加载中' : !point && binding.pointId ? '点位不存在' : point?.accessMode === 'WRITE_ONLY' ? '点位不可读' : '')
+  return readState(binding, binding && liveByDevice.value[binding.deviceId]?.find(value => value.pointId === binding.pointId), problem, now.value, item.kind === 'lamp')
+}
+watch(() => props.active, active => {
+  generation++
+  refreshing.value = false
+  clearTimeout(refreshTimer)
+  if (active) void refreshReadings()
+}, { immediate: true })
+watch(() => boundDevices.value.join(','), () => { if (props.active) void refreshReadings() })
 function checkpoint() {
   past.value.push(JSON.stringify(items.value))
   if (past.value.length > 50) past.value.shift()
@@ -130,10 +221,13 @@ function layer(mode: 'front' | 'back' | 'up' | 'down') {
   }
   void select([...selectedIds.value])
 }
-function add(kind: Kind, x = 80, y = 80) {
+function add(kind: Kind, x?: number, y?: number) {
   if (preview.value) return
   checkpoint()
-  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(x / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(y / 8) * 8)), width: 160, height: 80 }
+  const cascade = (items.value.length % 8) * 16
+  const left = x ?? 80 + cascade
+  const top = y ?? 80 + cascade
+  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: 160, height: 80 }
   items.value.push(item)
   void select(item.id)
 }
@@ -210,11 +304,11 @@ function load() {
     const document = JSON.parse(raw)
     if (document.version !== 1 || !Array.isArray(document.items) || document.items.length > 1000 || !document.items.every((item: Item) =>
       typeof item.id === 'string' && /^[a-zA-Z0-9-]+$/.test(item.id) && library.some(entry => entry.kind === item.kind) && typeof item.label === 'string' && item.label.length <= 80 &&
-      [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720
+      [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 && item.x + item.width <= 1200 && item.y + item.height <= 720 && (item.binding === undefined || validBinding(item.binding))
     ) || new Set(document.items.map((item: Item) => item.id)).size !== document.items.length) throw new Error('Invalid draft')
     items.value = document.items
     saved.value = JSON.stringify(items.value)
-    message.value = '已恢复本地草稿 · 尚未接入点位读写'
+    message.value = '已恢复本地草稿 · 只读绑定 / 控制未启用'
   } catch { message.value = '草稿无法读取，原存储未覆盖。请检查后再保存。' }
 }
 function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
@@ -236,8 +330,8 @@ function keydown(event: KeyboardEvent) {
     void nextTick(() => moveable.value?.updateRect())
   }
 }
-onMounted(() => { load(); window.addEventListener('beforeunload', beforeUnload) })
-onBeforeUnmount(() => { if (dirty.value) save(); window.removeEventListener('beforeunload', beforeUnload) })
+onMounted(() => { load(); clockTimer = setInterval(() => { now.value = Date.now() }, 1000); window.addEventListener('beforeunload', beforeUnload) })
+onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(clockTimer); if (dirty.value) save(); window.removeEventListener('beforeunload', beforeUnload) })
 </script>
 
 <template>
@@ -245,6 +339,7 @@ onBeforeUnmount(() => { if (dirty.value) save(); window.removeEventListener('bef
     <header class="editor-toolbar">
       <strong>组态画布 <small>{{ dirty ? '未保存' : '本地草稿' }}</small></strong>
       <div class="editor-actions">
+        <button :disabled="refreshing" @click="refreshReadings(true)">{{ refreshing ? '读取中' : '刷新数据' }}</button>
         <button :disabled="preview || !past.length" @click="travel()">撤销</button>
         <button :disabled="preview || !future.length" @click="travel(true)">重做</button>
         <label>缩放 <select v-model.number="zoom" @change="select([...selectedIds])"><option :value="0.5">50%</option><option :value="0.75">75%</option><option :value="1">100%</option><option :value="1.25">125%</option></select></label>
@@ -267,8 +362,8 @@ onBeforeUnmount(() => { if (dirty.value) save(); window.removeEventListener('bef
           <div ref="stage" class="editor-stage" :class="{ 'is-preview': preview }" :style="{ transform: `scale(${zoom})` }" tabindex="0" aria-label="编辑画布">
             <p v-if="!items.length" class="editor-empty">从左侧添加第一个组件</p>
             <div v-for="item in items" :key="item.id" :data-item-id="item.id" class="editor-item" :class="[item.kind, { selected: selectedIds.includes(item.id) && !preview }]" :style="{ left: `${item.x}px`, top: `${item.y}px`, width: `${item.width}px`, height: `${item.height}px` }" :tabindex="preview ? -1 : 0" :aria-label="item.label" @keydown.enter.prevent="!preview && pick(item.id, $event.shiftKey)" @keydown.space.prevent="!preview && pick(item.id, $event.shiftKey)">
-              <template v-if="item.kind === 'value'"><span>{{ item.label }}</span><strong>—</strong><small>未绑定</small></template>
-              <template v-else-if="item.kind === 'lamp'"><i></i><span>{{ item.label }}</span><small>未知</small></template>
+              <template v-if="item.kind === 'value'"><span>{{ item.label }}</span><strong>{{ reading(item).text }}</strong><small :class="{ 'read-error': reading(item).status !== '正常' }" :title="reading(item).time">{{ reading(item).status }}</small></template>
+              <template v-else-if="item.kind === 'lamp'"><i :class="{ 'lamp-active': reading(item).active, 'lamp-idle': reading(item).status === '正常' && !reading(item).active }"></i><span>{{ item.label }}</span><small :title="reading(item).time">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small></template>
               <button v-else-if="item.kind === 'button'" disabled>{{ item.label }}</button>
               <span v-else>{{ item.label }}</span>
             </div>
@@ -285,7 +380,26 @@ onBeforeUnmount(() => { if (dirty.value) save(); window.removeEventListener('bef
         <template v-if="selected">
           <label>名称<input :value="selected.label" maxlength="80" @change="update('label', $event)" /></label>
           <div class="editor-fields"><label v-for="field in (['x', 'y', 'width', 'height'] as const)" :key="field">{{ { x: 'X 坐标', y: 'Y 坐标', width: '宽度', height: '高度' }[field] }}<input type="number" :value="Math.round(selected[field])" @change="update(field, $event)" /></label></div>
-          <h3>数据与动作</h3><p>下一步接入点位读取与写入配置。当前组件不下发控制。</p>
+          <template v-if="selected.kind === 'value' || selected.kind === 'lamp'">
+            <h3>读取绑定</h3>
+            <label>设备<select :value="selected.binding?.deviceId ?? ''" @change="bindingDevice"><option value="">未绑定</option><option v-for="device in readDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
+            <template v-if="selected.binding">
+              <label>点位<select :value="selected.binding.pointId ?? ''" @change="bindingField('pointId', $event)"><option value="">选择点位</option><option v-for="point in selectedPoints" :key="point.id" :value="point.id" :disabled="point.accessMode === 'WRITE_ONLY'">{{ point.name }}</option></select></label>
+              <template v-if="selected.kind === 'value'">
+                <label>小数位<input type="number" min="0" max="6" :value="selected.binding.decimals" @change="bindingField('decimals', $event)" /></label>
+                <label>显示单位<input maxlength="40" :value="selected.binding.unit" @change="bindingField('unit', $event)" /></label>
+              </template>
+              <template v-else>
+                <label>有效值<input maxlength="40" :value="selected.binding.activeValue" @change="bindingField('activeValue', $event)" /></label>
+                <label>有效状态文字<input maxlength="40" :value="selected.binding.activeText" @change="bindingField('activeText', $event)" /></label>
+                <label>其他值状态文字<input maxlength="40" :value="selected.binding.inactiveText" @change="bindingField('inactiveText', $event)" /></label>
+              </template>
+              <label>数据过期时间（秒）<input type="number" min="5" max="3600" :value="selected.binding.staleSeconds" @change="bindingField('staleSeconds', $event)" /></label>
+              <p role="status">{{ reading(selected).status }}<br />采集时间：{{ reading(selected).time || '—' }}</p>
+            </template>
+          </template>
+          <p v-else>{{ selected.kind === 'button' ? '控制未启用，不下发设备命令。' : '静态文字，不绑定点位。' }}</p>
+          <p v-if="catalogError" class="read-error" role="alert">{{ catalogError }}</p>
         </template>
         <p v-else-if="selection.length">已选择 {{ selection.length }} 个组件，可批量移动、对齐和调整图层。</p>
         <p v-else>选择画布组件后编辑属性</p>
@@ -305,6 +419,7 @@ onBeforeUnmount(() => { if (dirty.value) save(); window.removeEventListener('bef
 </template>
 
 <style scoped>
+.editor .read-error { color:#e9b479; }.editor-item.lamp i.lamp-active { background:#55be96; }.editor-item.lamp i.lamp-idle { background:#8095ac; }
 .editor-commands { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .editor { --surface:#121e2b; --line:#35465a; --muted:#a6b6c8; --accent:#78b7ef; grid-column:1/-1; min-width:0; color:#e4edf5; background:var(--surface); border:1px solid var(--line); border-radius:4px; overflow:hidden; }
 .editor-toolbar,.editor-actions,.editor footer { display:flex; align-items:center; gap:8px; }
