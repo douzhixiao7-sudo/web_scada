@@ -64,6 +64,7 @@ const versions = ref<ServerRevision[]>([])
 const selectedVersionId = ref<number | null>(null)
 const saving = ref(false)
 const templates = ref<HmiTemplate[]>([])
+const templateSearch = ref('')
 const newTemplateName = ref('')
 const templateEditName = ref('')
 const templateEditingId = ref<number | null>(null)
@@ -74,7 +75,24 @@ const boundDevices = computed(() => [...new Set(items.value.flatMap(item => item
 const selectedPoints = computed(() => selected.value?.binding ? pointsByDevice.value[selected.value.binding.deviceId] ?? [] : [])
 const defaultStyle: ItemStyle = { fill: '#253f53', stroke: '#82a9c8', strokeWidth: 2, textColor: '#a9bed0' }
 const industrialKinds: Kind[] = ['pump', 'gate', 'motor', 'plc', 'gauge']
+const filteredTemplates = computed(() => {
+  const keyword = templateSearch.value.trim().toLocaleLowerCase()
+  return keyword ? templates.value.filter(template => template.name.toLocaleLowerCase().includes(keyword) || templateCategory(template).includes(keyword)) : templates.value
+})
 function industrialAsset(kind: Kind) { return `/assets/hmi/industrial/${kind}.png` }
+function templateCategory(template: HmiTemplate) {
+  const kinds = new Set(template.document.items.map(item => item.kind))
+  if ([...kinds].some(kind => industrialKinds.includes(kind))) return '设备单元'
+  if ([...kinds].some(kind => kind === 'line' || kind === 'pipe' || kind === 'rectangle' || kind === 'ellipse')) return '工艺流程'
+  if (kinds.has('value') || kinds.has('lamp')) return '数据展示'
+  return template.document.items.length > 1 ? '组合组件' : '基础组件'
+}
+function templateMeta(template: HmiTemplate) {
+  const bindings = template.document.items.filter(item => item.binding).length
+  return `${template.document.items.length} 个组件${bindings ? ` · ${bindings} 个绑定` : ''}`
+}
+function templateKinds(template: HmiTemplate) { return [...new Set(template.document.items.map(item => item.kind))].slice(0, 4) }
+function kindLabel(kind: Kind) { return library.find(entry => entry.kind === kind)?.label ?? kind }
 function itemStyle(item: Item) { return { ...defaultStyle, ...item.style } }
 function pathPoints(item: Item) {
   const horizontal = `4,${item.height / 2} ${item.width - 10},${item.height / 2}`
@@ -586,8 +604,16 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
           <img class="library-industrial-image" :src="industrialAsset(entry.kind)" alt="" draggable="false" />{{ entry.label }}
         </button>
         <h3>自定义模板 <small>{{ templates.length }}</small></h3>
+        <input v-if="templates.length" v-model="templateSearch" class="template-search" type="search" placeholder="搜索名称或分类" aria-label="搜索自定义模板" />
         <p v-if="!templates.length">尚未保存模板</p>
-        <div v-for="template in templates" :key="template.id" class="editor-template-row"><button :title="`添加 ${template.name}`" @click="addTemplate(template)">{{ template.name }}</button><button title="管理模板" @click="editTemplate(template)">管理</button></div>
+        <p v-else-if="!filteredTemplates.length">没有匹配的模板</p>
+        <article v-for="template in filteredTemplates" :key="template.id" class="editor-template-card">
+          <button class="template-add" :title="`添加 ${template.name}`" @click="addTemplate(template)">
+            <span class="template-preview" aria-hidden="true"><template v-for="kind in templateKinds(template)" :key="kind"><img v-if="industrialKinds.includes(kind)" :src="industrialAsset(kind)" alt="" /><i v-else>{{ kindLabel(kind).slice(0, 1) }}</i></template></span>
+            <span class="template-copy"><strong>{{ template.name }}</strong><small>{{ templateCategory(template) }} · {{ templateMeta(template) }}</small></span>
+          </button>
+          <button class="template-manage" :aria-label="`管理模板 ${template.name}`" title="管理模板" @click="editTemplate(template)">管理</button>
+        </article>
         <div v-if="templateEditingId" class="editor-template-edit"><input v-model="templateEditName" maxlength="128" aria-label="管理模板名称" /><div><button :disabled="templateBusy || !templateEditName.trim()" @click="renameTemplate">重命名</button><button :disabled="templateBusy" @click="deleteTemplate">{{ templateDeleteConfirmId === templateEditingId ? '确认删除' : '删除' }}</button></div><button @click="templateEditingId = null; templateEditName = ''">取消</button></div>
         <p v-if="templateError" class="read-error" role="alert">{{ templateError }}</p>
         <p>空白处拖动框选，Shift 加选。方向键微调，Shift + 方向键移动 10 px。离开菜单自动保存。</p>
@@ -697,6 +723,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }.editor-color-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor-color-fields input[type='color'] { height:32px; padding:3px; }.editor-check { display:flex!important; grid-template-columns:18px 1fr; align-items:center; }.editor-check input { width:auto; }
 .editor-item.pump,.editor-item.gate,.editor-item.motor,.editor-item.plc,.editor-item.gauge { flex-direction:column; padding:6px; }.editor-item .industrial-image { min-height:0; flex:1; }.editor-item .symbol-label { font-size:12px; line-height:14px; }.editor-item .symbol-label + small { font-size:10px; color:var(--muted); line-height:12px; }
 .library-industrial-image { width:28px; height:28px; object-fit:contain; flex:0 0 28px; }
-.editor-template-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:5px; }.editor-template-row button:last-child { width:auto; padding-inline:6px; }.editor-template-edit { display:grid; gap:6px; margin:8px 0 14px; }.editor-template-edit input { width:100%; box-sizing:border-box; }.editor-template-edit div { display:grid; grid-template-columns:1fr 1fr; gap:5px; }.editor-template-edit button { margin:0; justify-content:center; }
+.template-search { margin:0 0 8px; }.editor-template-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:5px; margin-bottom:8px; }.editor-template-card button { margin:0; }.editor-template-card .template-add { display:grid; grid-template-columns:38px minmax(0,1fr); gap:8px; padding:6px; }.template-preview { display:grid; grid-template-columns:1fr 1fr; place-items:center; width:36px; height:36px; overflow:hidden; background:#101c28; border:1px solid #30465b; }.template-preview img { width:18px; height:18px; object-fit:contain; }.template-preview i { display:grid; place-items:center; width:16px; height:16px; color:#9bb2c7; background:#213449; font-size:9px; font-style:normal; }.template-copy { min-width:0; display:grid; gap:2px; }.template-copy strong,.template-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.template-copy strong { font-size:12px; }.template-copy small { font-size:10px; font-weight:400; }.editor-template-card .template-manage { width:auto; padding-inline:6px; }.editor-template-edit { display:grid; gap:6px; margin:8px 0 14px; }.editor-template-edit input { width:100%; box-sizing:border-box; }.editor-template-edit div { display:grid; grid-template-columns:1fr 1fr; gap:5px; }.editor-template-edit button { margin:0; justify-content:center; }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>
