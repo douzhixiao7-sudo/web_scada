@@ -4,6 +4,7 @@ import Moveable from 'vue3-moveable'
 import Selecto from 'vue3-selecto'
 import type { OnDrag, OnDragStart, OnDragGroup, OnDragGroupStart } from 'vue3-moveable'
 import { readState, validBinding, type ReadBinding, type LiveValue } from './hmiReading'
+import HmiIndustrialSymbol from './HmiIndustrialSymbol.vue'
 
 const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
 type ReadDevice = { id: number; name: string }
@@ -19,21 +20,26 @@ let generation = 0
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
 
-type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe'
+type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe' | 'pump' | 'gate' | 'motor' | 'plc' | 'gauge'
 type ItemStyle = { fill: string; stroke: string; strokeWidth: number; textColor: string }
 type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean; style?: ItemStyle; route?: 'horizontal' | 'vertical' | 'elbow'; reversed?: boolean }
 type Document = { version: 1; items: Item[] }
 type ServerConfig = { document: Document; draftVersion: number; publishedRevisionId: number | null; publishedVersion: number | null; updatedBy: string; updatedAt: string }
 type ServerRevision = { id: number; version: number; document: Document; publishedBy: string; createdAt: string; current: boolean }
-const library: { kind: Kind; label: string; path: string }[] = [
-  { kind: 'value', label: '数值显示', path: 'M4 5h16v14H4z M8 9h8 M8 13h4' },
-  { kind: 'lamp', label: '状态指示灯', path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M9 12h6' },
-  { kind: 'button', label: '操作按钮', path: 'M3 6h18v12H3z M9 12h6 M12 9v6' },
-  { kind: 'text', label: '文字标签', path: 'M4 5h16 M12 5v14 M8 19h8' },
-  { kind: 'rectangle', label: '矩形容器', path: 'M4 5h16v14H4z' },
-  { kind: 'ellipse', label: '圆形图元', path: 'M4 12a8 6 0 1 0 16 0 8 6 0 1 0-16 0' },
-  { kind: 'line', label: '工艺连线', path: 'M3 12h18 M17 8l4 4-4 4' },
-  { kind: 'pipe', label: '工艺管道', path: 'M3 9h18 M3 15h18' },
+const library: { kind: Kind; label: string; path: string; group: 'basic' | 'industrial' }[] = [
+  { kind: 'value', label: '数值显示', path: 'M4 5h16v14H4z M8 9h8 M8 13h4', group: 'basic' },
+  { kind: 'lamp', label: '状态指示灯', path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M9 12h6', group: 'basic' },
+  { kind: 'button', label: '操作按钮', path: 'M3 6h18v12H3z M9 12h6 M12 9v6', group: 'basic' },
+  { kind: 'text', label: '文字标签', path: 'M4 5h16 M12 5v14 M8 19h8', group: 'basic' },
+  { kind: 'rectangle', label: '矩形容器', path: 'M4 5h16v14H4z', group: 'basic' },
+  { kind: 'ellipse', label: '圆形图元', path: 'M4 12a8 6 0 1 0 16 0 8 6 0 1 0-16 0', group: 'basic' },
+  { kind: 'line', label: '工艺连线', path: 'M3 12h18 M17 8l4 4-4 4', group: 'basic' },
+  { kind: 'pipe', label: '工艺管道', path: 'M3 9h18 M3 15h18', group: 'basic' },
+  { kind: 'pump', label: '泵', path: 'M5 12a7 7 0 1 0 14 0 7 7 0 1 0-14 0 M19 12h3v-5', group: 'industrial' },
+  { kind: 'gate', label: '闸门', path: 'M3 12h5l4-4v8l4-4-4-4v8l4-4h5 M12 8V3', group: 'industrial' },
+  { kind: 'motor', label: '电机', path: 'M4 12a8 8 0 1 0 16 0 8 8 0 1 0-16 0 M8 15V9l4 4 4-4v6', group: 'industrial' },
+  { kind: 'plc', label: 'PLC', path: 'M4 4h16v16H4z M8 4v16 M16 4v16 M10 8h4 M10 12h4 M10 16h4', group: 'industrial' },
+  { kind: 'gauge', label: '仪表', path: 'M4 15a8 8 0 0 1 16 0 M12 15l4-6 M6 19h12', group: 'industrial' },
 ]
 const storageKey = computed(() => `scada.hmi.editor.draft.v1.${props.screenId}`)
 const items = ref<Item[]>([])
@@ -132,7 +138,7 @@ function reading(item: Item) {
   const point = binding && pointsByDevice.value[binding.deviceId]?.find(point => point.id === binding.pointId)
   const problem = !binding ? '' : catalogError.value || readErrors.value[binding.deviceId] ||
     (!pointsByDevice.value[binding.deviceId] ? '加载中' : !point && binding.pointId ? '点位不存在' : point?.accessMode === 'WRITE_ONLY' ? '点位不可读' : '')
-  return readState(binding, binding && liveByDevice.value[binding.deviceId]?.find(value => value.pointId === binding.pointId), problem, now.value, item.kind === 'lamp')
+  return readState(binding, binding && liveByDevice.value[binding.deviceId]?.find(value => value.pointId === binding.pointId), problem, now.value, ['lamp', 'pump', 'gate', 'motor', 'plc'].includes(item.kind))
 }
 watch(() => props.active, active => {
   generation++
@@ -253,7 +259,8 @@ function add(kind: Kind, x?: number, y?: number) {
   const left = x ?? 80 + cascade
   const top = y ?? 80 + cascade
   const compact = kind === 'line' || kind === 'pipe'
-  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : 160, height: compact ? 40 : 80, style: { ...defaultStyle }, route: compact ? 'horizontal' : undefined }
+  const symbol = ['pump', 'gate', 'motor', 'plc', 'gauge'].includes(kind)
+  const item: Item = { id: crypto.randomUUID(), kind, label: library.find(entry => entry.kind === kind)!.label, x: Math.max(0, Math.min(1040, Math.round(left / 8) * 8)), y: Math.max(0, Math.min(640, Math.round(top / 8) * 8)), width: compact ? 240 : symbol ? 120 : 160, height: compact ? 40 : symbol ? 104 : 80, style: { ...defaultStyle }, route: compact ? 'horizontal' : undefined }
   items.value.push(item)
   void select(item.id)
 }
@@ -508,7 +515,11 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
     <div class="editor-workspace" :class="{ preview }">
       <aside v-if="!preview" class="editor-library">
         <h3>基础组件</h3>
-        <button v-for="entry in library" :key="entry.kind" draggable="true" @dragstart="$event.dataTransfer?.setData('application/x-scada-component', entry.kind)" @click="add(entry.kind)">
+        <button v-for="entry in library.filter(item => item.group === 'basic')" :key="entry.kind" draggable="true" @dragstart="$event.dataTransfer?.setData('application/x-scada-component', entry.kind)" @click="add(entry.kind)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>{{ entry.label }}
+        </button>
+        <h3>工业符号</h3>
+        <button v-for="entry in library.filter(item => item.group === 'industrial')" :key="entry.kind" draggable="true" @dragstart="$event.dataTransfer?.setData('application/x-scada-component', entry.kind)" @click="add(entry.kind)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="entry.path" /></svg>{{ entry.label }}
         </button>
         <p>空白处拖动框选，Shift 加选。方向键微调，Shift + 方向键移动 10 px。离开菜单自动保存。</p>
@@ -532,6 +543,10 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
                 </svg>
                 <span class="shape-label">{{ item.label }}</span>
               </template>
+              <template v-else-if="['pump', 'gate', 'motor', 'plc', 'gauge'].includes(item.kind)">
+                <HmiIndustrialSymbol :kind="item.kind as 'pump' | 'gate' | 'motor' | 'plc' | 'gauge'" :stroke="itemStyle(item).stroke" :fill="itemStyle(item).fill" :stroke-width="itemStyle(item).strokeWidth" :active="reading(item).active" />
+                <span class="symbol-label">{{ item.label }}</span><small :class="{ 'read-error': reading(item).status !== '正常' }">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small>
+              </template>
               <span v-else class="shape-label">{{ item.label }}</span>
             </div>
             <!-- Viewport-positioned marquee must not inherit the canvas transform. -->
@@ -547,12 +562,12 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
         <template v-if="selected">
           <label>名称<input :disabled="selected.locked" :value="selected.label" maxlength="80" @change="update('label', $event)" /></label>
           <div class="editor-fields"><label v-for="field in (['x', 'y', 'width', 'height'] as const)" :key="field">{{ { x: 'X 坐标', y: 'Y 坐标', width: '宽度', height: '高度' }[field] }}<input type="number" :disabled="selected.locked" :value="Math.round(selected[field])" @change="update(field, $event)" /></label></div>
-          <template v-if="selected.kind === 'value' || selected.kind === 'lamp'">
+          <template v-if="selected.kind === 'value' || selected.kind === 'lamp' || ['pump', 'gate', 'motor', 'plc', 'gauge'].includes(selected.kind)">
             <h3>读取绑定</h3>
             <label>设备<select :disabled="selected.locked" :value="selected.binding?.deviceId ?? ''" @change="bindingDevice"><option value="">未绑定</option><option v-for="device in readDevices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
             <template v-if="selected.binding">
               <label>点位<select :disabled="selected.locked" :value="selected.binding.pointId ?? ''" @change="bindingField('pointId', $event)"><option value="">选择点位</option><option v-for="point in selectedPoints" :key="point.id" :value="point.id" :disabled="point.accessMode === 'WRITE_ONLY'">{{ point.name }}</option></select></label>
-              <template v-if="selected.kind === 'value'">
+              <template v-if="selected.kind === 'value' || selected.kind === 'gauge'">
                 <label>小数位<input type="number" min="0" max="6" :disabled="selected.locked" :value="selected.binding.decimals" @change="bindingField('decimals', $event)" /></label>
                 <label>显示单位<input maxlength="40" :disabled="selected.locked" :value="selected.binding.unit" @change="bindingField('unit', $event)" /></label>
               </template>
@@ -566,7 +581,7 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
             </template>
           </template>
           <p v-else>{{ selected.kind === 'button' ? '控制未启用，不下发设备命令。' : ['rectangle', 'ellipse', 'line', 'pipe'].includes(selected.kind) ? '工业基础图元，不绑定点位。' : '静态文字，不绑定点位。' }}</p>
-          <template v-if="['rectangle', 'ellipse', 'line', 'pipe', 'text'].includes(selected.kind)">
+          <template v-if="['rectangle', 'ellipse', 'line', 'pipe', 'text', 'pump', 'gate', 'motor', 'plc', 'gauge'].includes(selected.kind)">
             <h3>外观</h3>
             <div class="editor-color-fields"><label>填充<input type="color" :disabled="selected.locked" :value="itemStyle(selected).fill" @input="updateStyle('fill', $event)" /></label><label>边框 / 线<input type="color" :disabled="selected.locked" :value="itemStyle(selected).stroke" @input="updateStyle('stroke', $event)" /></label><label>文字<input type="color" :disabled="selected.locked" :value="itemStyle(selected).textColor" @input="updateStyle('textColor', $event)" /></label><label>线宽<input type="number" min="1" max="12" :disabled="selected.locked" :value="itemStyle(selected).strokeWidth" @input="updateStyle('strokeWidth', $event)" /></label></div>
           </template>
@@ -609,5 +624,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .editor-viewport { overflow:auto; padding:24px; background:#0c141e; min-width:0; max-height:650px; }.editor-stage { position:relative; width:1200px; height:720px; transform-origin:top left; background-color:#152231; background-image:radial-gradient(#33475b 1px,transparent 1px); background-size:8px 8px; }.editor-stage.is-preview { background-image:none; }.editor-empty { position:absolute; top:40%; width:100%; text-align:center; pointer-events:none; }
 .editor-item { position:absolute; display:flex; gap:8px; align-items:center; justify-content:center; padding:8px; box-sizing:border-box; border:1px solid transparent; user-select:none; overflow:hidden; overflow-wrap:anywhere; }.editor-item.selected { border-color:var(--accent); }.editor-item.value { flex-wrap:wrap; background:#1c2d3e; }.editor-item.value strong { font-size:24px; }.editor-item.value span { width:100%; font-size:14px; }.editor-item.lamp i { width:14px; height:14px; background:#8392a3; border-radius:50%; flex-shrink:0; }.editor-item button { width:100%; height:100%; pointer-events:none; }.editor-item.text { justify-content:flex-start; }.editor-properties label { display:grid; gap:6px; font-size:12px; margin-bottom:12px; }.editor-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor input { width:100%; box-sizing:border-box; }.editor footer { justify-content:space-between; flex-wrap:wrap; padding:10px 14px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
 .editor-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.editor-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.editor-item.line,.editor-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.editor-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }.editor-item.locked { cursor:not-allowed; }.editor-item.locked.selected { border-color:#e9b479; }.editor-color-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.editor-color-fields input[type='color'] { height:32px; padding:3px; }.editor-check { display:flex!important; grid-template-columns:18px 1fr; align-items:center; }.editor-check input { width:auto; }
+.editor-item.pump,.editor-item.gate,.editor-item.motor,.editor-item.plc,.editor-item.gauge { flex-direction:column; padding:6px; }.editor-item .industrial-symbol { min-height:0; flex:1; }.editor-item .symbol-label { font-size:12px; line-height:14px; }.editor-item .symbol-label + small { font-size:10px; color:var(--muted); line-height:12px; }
 @media(max-width:1000px) { .editor-workspace { grid-template-columns:130px minmax(0,1fr); }.editor-properties { grid-column:1/-1; border-left:0; border-top:1px solid var(--line); }.editor-fields { grid-template-columns:repeat(4,1fr); } }
 </style>

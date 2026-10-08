@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { readState, validBinding, type LiveValue, type ReadBinding } from './hmiReading'
+import HmiIndustrialSymbol from './HmiIndustrialSymbol.vue'
 
 const props = defineProps<{ active: boolean; screenId: number; read: <T>(url: string, options?: RequestInit) => Promise<T> }>()
-type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe'
+type Kind = 'value' | 'lamp' | 'button' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'pipe' | 'pump' | 'gate' | 'motor' | 'plc' | 'gauge'
 type ItemStyle = { fill: string; stroke: string; strokeWidth: number; textColor: string }
 type Item = { id: string; kind: Kind; label: string; x: number; y: number; width: number; height: number; binding?: ReadBinding; groupId?: string; locked?: boolean; style?: ItemStyle; route?: 'horizontal' | 'vertical' | 'elbow'; reversed?: boolean }
 type Document = { version: 1; items: Item[] }
@@ -38,7 +39,7 @@ function validDocument(value: unknown): value is Document {
   if (!value || typeof value !== 'object') return false
   const document = value as Document
   return document.version === 1 && Array.isArray(document.items) && document.items.length <= 1000 && document.items.every(item =>
-    typeof item.id === 'string' && ['value', 'lamp', 'button', 'text', 'rectangle', 'ellipse', 'line', 'pipe'].includes(item.kind) && typeof item.label === 'string' &&
+    typeof item.id === 'string' && ['value', 'lamp', 'button', 'text', 'rectangle', 'ellipse', 'line', 'pipe', 'pump', 'gate', 'motor', 'plc', 'gauge'].includes(item.kind) && typeof item.label === 'string' &&
     [item.x, item.y, item.width, item.height].every(Number.isFinite) && item.x >= 0 && item.y >= 0 && item.width >= 40 && item.height >= 40 &&
     item.x + item.width <= 1200 && item.y + item.height <= 720 &&
     (item.groupId === undefined || /^[a-zA-Z0-9-]+$/.test(item.groupId)) && (item.locked === undefined || typeof item.locked === 'boolean') &&
@@ -96,7 +97,7 @@ function reading(item: Item) {
   const binding = item.binding
   const problem = binding ? errorsByDevice.value[binding.deviceId] ?? '' : ''
   const value = binding ? valuesByDevice.value[binding.deviceId]?.find(row => row.pointId === binding.pointId) : undefined
-  return readState(binding, value, problem, now.value, item.kind === 'lamp')
+  return readState(binding, value, problem, now.value, ['lamp', 'pump', 'gate', 'motor', 'plc'].includes(item.kind))
 }
 
 watch(() => [props.active, props.screenId] as const, ([active]) => {
@@ -143,6 +144,10 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
               </svg>
               <span class="shape-label">{{ item.label }}</span>
             </template>
+            <template v-else-if="['pump', 'gate', 'motor', 'plc', 'gauge'].includes(item.kind)">
+              <HmiIndustrialSymbol :kind="item.kind as 'pump' | 'gate' | 'motor' | 'plc' | 'gauge'" :stroke="itemStyle(item).stroke" :fill="itemStyle(item).fill" :stroke-width="itemStyle(item).strokeWidth" :active="reading(item).active" />
+              <span class="symbol-label">{{ item.label }}</span><small :class="{ error: reading(item).status !== '正常' }">{{ reading(item).status === '正常' ? reading(item).text : reading(item).status }}</small>
+            </template>
             <span v-else class="shape-label">{{ item.label }}</span>
           </div>
         </div>
@@ -164,5 +169,6 @@ onBeforeUnmount(() => { generation++; clearTimeout(refreshTimer); clearInterval(
 .runtime-item.lamp i { width:14px; height:14px; flex-shrink:0; border-radius:50%; background:#7d8fa1; }.runtime-item.lamp i.active { background:#55be96; box-shadow:0 0 0 3px rgba(85,190,150,.14); }.runtime-item.lamp i.idle { background:#8095ac; }
 .runtime-item button { width:100%; height:100%; color:#9fb0c1; background:#1a2a3b; border:1px solid #354a5e; border-radius:3px; }.runtime-item.text { justify-content:flex-start; }
 .runtime-item.rectangle { background:rgba(42,67,88,.34); border:1px solid #54708a; }.runtime-item.ellipse { border:2px solid #54708a; border-radius:50%; background:rgba(42,67,88,.18); }.runtime-item.line,.runtime-item.pipe { padding:0; overflow:visible; }.process-path { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }.runtime-item .shape-label { position:absolute; left:8px; top:4px; padding:1px 4px; color:inherit; background:rgba(12,20,30,.75); font-size:11px; line-height:16px; }
+.runtime-item.pump,.runtime-item.gate,.runtime-item.motor,.runtime-item.plc,.runtime-item.gauge { flex-direction:column; padding:6px; }.runtime-item .industrial-symbol { min-height:0; flex:1; }.runtime-item .symbol-label { font-size:12px; line-height:14px; }.runtime-item .symbol-label + small { font-size:10px; line-height:12px; }
 .runtime-state { min-height:360px; display:grid; place-content:center; gap:8px; text-align:center; color:#93a8bb; }.runtime-state strong { color:#dce7f0; font-size:16px; }
 </style>

@@ -23,7 +23,7 @@ import tools.jackson.databind.ObjectMapper;
 public class HmiService {
     private static final int MAX_DOCUMENT_BYTES = 1_000_000;
     private static final Pattern ITEM_ID = Pattern.compile("[a-zA-Z0-9-]+");
-    private static final Set<String> KINDS = Set.of("value", "lamp", "button", "text", "rectangle", "ellipse", "line", "pipe");
+    private static final Set<String> KINDS = Set.of("value", "lamp", "button", "text", "rectangle", "ellipse", "line", "pipe", "pump", "gate", "motor", "plc", "gauge");
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
