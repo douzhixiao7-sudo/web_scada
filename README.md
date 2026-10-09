@@ -1,11 +1,11 @@
 # Web SCADA 基础工程
 
-当前范围：Vue + Spring Boot 可运行骨架、本机 MySQL / Redis 基础连接、认证菜单、基于金斗河现场点表的设备与点位台账、系统字典、采集通道配置 MVP、Modbus TCP 仿真 PLC、Redis 实时当前值、首页真实运行总览、实时监控页面、报警闭环、报警规则维护、控制下发保护审计、低频历史采样和固定版 HMI 展示页。当前没有接入真实 PLC 或拖拉拽组态编辑器。
+当前范围：Vue + Spring Boot、本机 MySQL / Redis、认证菜单、金斗河现场设备与点位台账、系统字典、采集通道、Modbus TCP 仿真 PLC、Redis 实时当前值、运行总览、实时监控、报警闭环、控制下发保护、低频历史占位，以及支持拖放、绑定、草稿、发布、版本和运行态的可视化 HMI 组态编辑器。当前尚未接入真实 PLC、时序数据库和生产部署环境。
 
 
 ## MVP 当前状态
 
-截至 2026-09-28，MVP 已通过本机收尾验收。当前闭环包括：登录菜单、设备点位、Modbus TCP 仿真 PLC、Java 采集、Redis 当前值、实时监控、报警闭环、控制下发保护、低频历史占位、首页总览和固定版 HMI。真实 PLC 接入、时序库、拖拉拽组态编辑器、细粒度权限、报表和生产部署属于后续 MVP+。
+截至 2026-10-09，首个 MVP 已完成本机全链路验收。当前闭环包括：登录菜单、设备点位、Modbus TCP 仿真 PLC、Java 采集、Redis 当前值、实时监控、报警闭环、控制下发保护、首页总览，以及可视化 HMI 编辑、发布和运行。真实 PLC 联调、时序库、细粒度权限、报表和生产部署属于 MVP+。
 
 ## 本机位置
 
@@ -39,14 +39,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 # 已有环境，仅构建
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
 
-# 启动前后端
+# 首次指定本机 Redis 路径，之后会保存到忽略提交的本机配置
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1 -RedisServer D:\redis-windows-master\redis-server.exe
+
+# 后续直接启动 MySQL、Redis、后端和前端
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
+
+# 查看基础设施和应用状态
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\status.ps1
+
+# 执行首个 MVP 只读冒烟验收
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke-test.ps1
 
 # 停止前后端
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
+
+# 同时停止由项目启动的 Redis
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1 -IncludeInfrastructure
 ```
 
-后端从 `.local/config/application-local.properties` 读取本机 MySQL / Redis 连接配置。该文件包含本机密码，已被 `.gitignore` 排除，不要提交到公开仓库。
+后端从 `.local/config/application-local.properties` 读取本机 MySQL / Redis 连接配置。该文件包含本机密码，已被 `.gitignore` 排除，不要提交到公开仓库。开发脚本以无持久化模式启动 Redis，只存放可重建的会话和实时当前值，并使用项目独立数据目录，不读取其他 Redis 实例遗留的快照。
 
 服务绑定本机回环地址：前端 `http://127.0.0.1:5173`，后端 `http://127.0.0.1:8080/actuator/health`，前端代理 `/api/actuator/health`。健康检查包含 `db` 和 `redis`；失败时不会伪造成功。
 
@@ -140,9 +152,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
 后续数据量增加后，可以把历史写入服务替换为 TDengine、TimescaleDB 或 InfluxDB，实时值 Redis 链路不需要改变。
 
 
-## 固定版 HMI 展示页
+## 可视化 HMI 组态
 
-“组态画面”菜单已提供固定版 HMI 展示页。页面用现场工艺线和设备节点展示金斗河设备运行态势，点击设备后可查看区域、协议、通讯地址、活动报警和关键点位实时值。数据来源复用设备台账、点位台账、Redis 当前值和活动报警接口。当前是展示型 HMI，不包含拖拉拽编辑器。
+“组态画面”支持多画面管理、组件拖放、框选、缩放、组合、锁定、图层与对齐，提供基础图元、工艺连线、工业设备图片、实时数值和状态灯。组件可以绑定设备点位读取实时值，自定义组件可保存为模板并映射到同类设备。草稿与发布版本分离，运行页只加载已发布版本，并统一展示停止、未采集、过期、质量异常和通信中断状态。当前 MVP 不开放组态组件直接写 PLC。
 ## 工程结构
 
 ```text

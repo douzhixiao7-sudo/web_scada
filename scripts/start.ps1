@@ -1,4 +1,7 @@
-param([string]$ToolsRoot = (Join-Path $PSScriptRoot '..\.local\tools'))
+param(
+    [string]$ToolsRoot = (Join-Path $PSScriptRoot '..\.local\tools'),
+    [string]$RedisServer
+)
 . "$PSScriptRoot\env.ps1" -ToolsRoot $ToolsRoot
 if (-not (Test-Path "$ProjectRoot\.local\config\application-local.properties")) {
     throw 'Local database configuration missing. Initialize infrastructure first; see README.'
@@ -7,6 +10,7 @@ $jar = Join-Path $ProjectRoot 'backend\target\scada-server-0.0.1-SNAPSHOT.jar'
 if (-not (Test-Path -LiteralPath $jar)) { throw 'Build first: scripts/build.ps1' }
 $vite = Join-Path $ProjectRoot 'frontend\node_modules\vite\bin\vite.js'
 if (-not (Test-Path -LiteralPath $vite)) { throw 'Install dependencies first: scripts/setup.ps1' }
+& "$PSScriptRoot\infra.ps1" -Action Start -RedisServer $RedisServer
 foreach ($port in @(8080, 5173)) {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $port)
     try { $listener.Start() } catch { throw "Port $port is occupied. Stop the existing service first." } finally { $listener.Stop() }
