@@ -13,3 +13,6 @@ dump.rdb
 .idea/
 .vscode/
 *.log
+database/web_scada_mvp.sql
+database/web_scada_mvp.sql.gz
+database/web_scada_mvp.sql.gz.sha256
